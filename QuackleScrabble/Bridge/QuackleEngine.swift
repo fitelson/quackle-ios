@@ -127,6 +127,13 @@ class QuackleEngine {
         errorMessage = nil
         lastMoveDescription = ""
         refreshState()
+        if !isHumanTurn {
+            // Delay AI's first move so the view renders before the board updates
+            Task {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                triggerAIIfNeeded()
+            }
+        }
     }
 
     // MARK: - Tap to Place

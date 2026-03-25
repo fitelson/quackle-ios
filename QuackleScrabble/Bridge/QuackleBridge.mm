@@ -126,22 +126,28 @@ static std::string nsToStd(NSString *s) {
 
     PlayerList players;
 
-    // Human player
-    Player human(MARK_UV(nsToStd(name)), Player::HumanPlayerType, 0);
-    players.push_back(human);
+    // Coin flip to determine who goes first
+    bool humanFirst = arc4random_uniform(2) == 0;
 
-    // AI player using NormalPlayer
-    Player computer(MARK_UV("AI"), Player::ComputerPlayerType, 1);
+    Player human(MARK_UV(nsToStd(name)), Player::HumanPlayerType, humanFirst ? 0 : 1);
+    Player computer(MARK_UV("AI"), Player::ComputerPlayerType, humanFirst ? 1 : 0);
     NormalPlayer *ai = new NormalPlayer(meanLoss, stdDev, MARK_UV("Intermediate"));
     computer.setComputerPlayer(ai);
-    players.push_back(computer);
+
+    if (humanFirst) {
+        players.push_back(human);
+        players.push_back(computer);
+    } else {
+        players.push_back(computer);
+        players.push_back(human);
+    }
 
     _game->setPlayers(players);
     _game->associateKnownComputerPlayers();
     _game->addPosition();
 
-    NSLog(@"QuackleBridge: New game started - %@ vs AI (NormalPlayer delta=%.1f sigma=%.1f)",
-          name, meanLoss, stdDev);
+    NSLog(@"QuackleBridge: New game started - %@ vs AI (NormalPlayer delta=%.1f sigma=%.1f) — %@ goes first",
+          name, meanLoss, stdDev, humanFirst ? name : @"AI");
 }
 
 #pragma mark - Board State
