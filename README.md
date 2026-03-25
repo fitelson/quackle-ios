@@ -1,4 +1,4 @@
-# QuackleScrabble (iOS)
+# Scrabble (iOS)
 
 A personal Scrabble app for iPhone, built with SwiftUI and the [Quackle](https://github.com/quackle/quackle) C++ engine.
 
@@ -47,6 +47,10 @@ libquackle/       — Quackle C++ engine sources
 data/             — TWL06 dictionary, alphabet, strategy files
 project.yml       — XcodeGen project spec
 ```
+
+## Acknowledgments
+
+This app uses the [Quackle](https://github.com/quackle/quackle) crossword game AI engine, created by **Jason Katz-Brown**, **John O'Laughlin**, and **John Fultz**. Quackle is released under the [GPL v2+](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html).
 
 ## Related
 
