@@ -78,6 +78,20 @@ NS_ASSUME_NONNULL_BEGIN
 - (int)historySize;
 - (NSArray<QBHistoryEntry *> *)moveHistory;
 
+// Save/Restore
+- (NSArray<NSString *> *)rackForPlayerIndex:(int)index;
+- (NSArray<NSString *> *)bagTiles;
+- (void)restoreGameWithHumanName:(NSString *)name
+                      humanFirst:(BOOL)humanFirst
+                      aiMeanLoss:(double)meanLoss
+                        aiStdDev:(double)stdDev
+                    boardLetters:(NSArray<NSArray<NSString *> *> *)boardLetters
+                     boardBlanks:(NSArray<NSArray<NSNumber *> *> *)boardBlanks
+                    playerScores:(NSArray<NSNumber *> *)scores
+                     playerRacks:(NSArray<NSArray<NSString *> *> *)racks
+                        bagTiles:(NSArray<NSString *> *)bag
+            currentPlayerIsHuman:(BOOL)humanTurn;
+
 @end
 
 NS_ASSUME_NONNULL_END

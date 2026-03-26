@@ -436,4 +436,136 @@ static std::string nsToStd(NSString *s) {
     return result;
 }
 
+#pragma mark - Save/Restore
+
+- (NSArray<NSString *> *)rackForPlayerIndex:(int)index {
+    if (!_game || !_game->hasPositions()) return @[];
+    const PlayerList &players = _game->currentPosition().players();
+    if (index < 0 || index >= (int)players.size()) return @[];
+
+    const Rack &rack = players[index].rack();
+    LetterString tiles = rack.tiles();
+    NSMutableArray *result = [NSMutableArray array];
+    for (unsigned int i = 0; i < tiles.length(); ++i) {
+        Letter letter = tiles[i];
+        UVString str = QUACKLE_ALPHABET_PARAMETERS->userVisible(letter);
+        [result addObject:uvToNS(str)];
+    }
+    return result;
+}
+
+- (NSArray<NSString *> *)bagTiles {
+    if (!_game || !_game->hasPositions()) return @[];
+    const Bag &bag = _game->currentPosition().bag();
+    const LongLetterString &tiles = bag.tiles();
+    NSMutableArray *result = [NSMutableArray array];
+    for (unsigned int i = 0; i < tiles.size(); ++i) {
+        Letter letter = tiles[i];
+        UVString str = QUACKLE_ALPHABET_PARAMETERS->userVisible(letter);
+        [result addObject:uvToNS(str)];
+    }
+    return result;
+}
+
+- (void)restoreGameWithHumanName:(NSString *)name
+                      humanFirst:(BOOL)humanFirst
+                      aiMeanLoss:(double)meanLoss
+                        aiStdDev:(double)stdDev
+                    boardLetters:(NSArray<NSArray<NSString *> *> *)boardLetters
+                     boardBlanks:(NSArray<NSArray<NSNumber *> *> *)boardBlanks
+                    playerScores:(NSArray<NSNumber *> *)scores
+                     playerRacks:(NSArray<NSArray<NSString *> *> *)racks
+                        bagTiles:(NSArray<NSString *> *)bagTileLetters
+            currentPlayerIsHuman:(BOOL)humanTurn {
+    delete _game;
+    _game = new Game;
+
+    // Set up players with saved scores
+    PlayerList players;
+    Player human(MARK_UV(nsToStd(name)), Player::HumanPlayerType, humanFirst ? 0 : 1);
+    Player computer(MARK_UV("AI"), Player::ComputerPlayerType, humanFirst ? 1 : 0);
+    NormalPlayer *ai = new NormalPlayer(meanLoss, stdDev, MARK_UV("Intermediate"));
+    computer.setComputerPlayer(ai);
+
+    int humanIdx = humanFirst ? 0 : 1;
+    int aiIdx = humanFirst ? 1 : 0;
+    if ((int)scores.count > humanIdx) human.setScore([scores[humanIdx] intValue]);
+    if ((int)scores.count > aiIdx) computer.setScore([scores[aiIdx] intValue]);
+
+    if (humanFirst) {
+        players.push_back(human);
+        players.push_back(computer);
+    } else {
+        players.push_back(computer);
+        players.push_back(human);
+    }
+
+    _game->setPlayers(players);
+    _game->associateKnownComputerPlayers();
+    _game->addPosition();
+
+    // Restore board by placing each tile
+    Board board;
+    board.prepareEmptyBoard();
+
+    int rows = (int)boardLetters.count;
+    for (int row = 0; row < rows; ++row) {
+        NSArray<NSString *> *rowLetters = boardLetters[row];
+        NSArray<NSNumber *> *rowBlanks = boardBlanks[row];
+        int cols = (int)rowLetters.count;
+        for (int col = 0; col < cols; ++col) {
+            NSString *letter = rowLetters[col];
+            if (letter.length == 0) continue;
+
+            BOOL isBlank = [rowBlanks[col] boolValue];
+            std::string letterStr;
+            if (isBlank) {
+                letterStr = std::string(1, tolower([letter UTF8String][0]));
+            } else {
+                letterStr = nsToStd(letter);
+            }
+
+            std::string pos = std::to_string(row + 1) + std::string(1, char('A' + col));
+            LetterString encoded = QUACKLE_ALPHABET_PARAMETERS->encode(MARK_UV(letterStr));
+            Move move = Move::createPlaceMove(MARK_UV(pos), encoded);
+            board.makeMove(move);
+        }
+    }
+
+    _game->currentPosition().setBoard(board);
+    _game->currentPosition().ensureBoardIsPreparedForAnalysis();
+
+    // Restore bag using LongLetterString (LetterString is fixed-length, max 40)
+    LongLetterString bagLong;
+    for (NSString *letter in bagTileLetters) {
+        LetterString encoded = QUACKLE_ALPHABET_PARAMETERS->encode(MARK_UV(nsToStd(letter)));
+        for (unsigned int i = 0; i < encoded.length(); ++i)
+            bagLong += encoded[i];
+    }
+    Bag restoredBag;
+    restoredBag.toss(bagLong);
+    _game->currentPosition().setBag(restoredBag);
+
+    // Restore player racks
+    for (int i = 0; i < (int)racks.count && i < (int)_game->currentPosition().players().size(); ++i) {
+        NSArray<NSString *> *rackLetters = racks[i];
+        LetterString rackTiles;
+        for (NSString *letter in rackLetters) {
+            LetterString encoded = QUACKLE_ALPHABET_PARAMETERS->encode(MARK_UV(nsToStd(letter)));
+            rackTiles += encoded;
+        }
+        int playerId = _game->currentPosition().players()[i].id();
+        _game->currentPosition().setPlayerRack(playerId, Rack(rackTiles), false);
+    }
+
+    // Set current player
+    int humanId = humanFirst ? 0 : 1;
+    int aiId = humanFirst ? 1 : 0;
+    _game->currentPosition().setCurrentPlayer(humanTurn ? humanId : aiId);
+
+    NSLog(@"QuackleBridge: Game restored — %@ vs AI, bag=%d tiles, %@ to play",
+          name, (int)_game->currentPosition().bag().size(),
+          humanTurn ? name : @"AI");
+}
+
 @end

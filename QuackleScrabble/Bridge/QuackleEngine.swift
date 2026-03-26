@@ -95,6 +95,7 @@ class QuackleEngine {
     var moveHistory: [MoveHistoryEntry] = []
     var showMoves: Bool = false
     var topMoves: [MoveModel] = []
+    var humanFirst: Bool = true
 
     private let bridge = QuackleBridge.shared()
 
@@ -143,17 +144,22 @@ class QuackleEngine {
             await MainActor.run {
                 self.loadingProgress = 1.0
                 self.isInitialized = true
-                self.startNewGame()
+                if !self.loadSavedGame() {
+                    self.startNewGame()
+                }
             }
         }
     }
 
     func startNewGame() {
+        UserDefaults.standard.removeObject(forKey: "savedGameState")
         bridge.startNewGame(withHumanName: "You", aiMeanLoss: skillMeanLoss, aiStdDev: skillStdDev)
         tentativePlacements = []
+        moveHistory = []
         errorMessage = nil
         lastMoveDescription = ""
         refreshState()
+        humanFirst = (players.first?.name == "You")
         if !isHumanTurn {
             // Delay AI's first move so the view renders before the board updates
             Task {
@@ -665,5 +671,105 @@ class QuackleEngine {
         isGameOver = bridge.isGameOver()
         tilesInBag = Int(bridge.tilesRemainingInBag())
         turnNumber = Int(bridge.turnNumber())
+
+        // Auto-save after each state change
+        saveGameState()
+    }
+
+    // MARK: - Save/Restore
+
+    func saveGameState() {
+        guard isInitialized, !board.isEmpty else { return }
+
+        let savedBoard: [[SavedTile?]] = board.map { row in
+            row.map { square in
+                guard let letter = square.letter else { return nil }
+                return SavedTile(letter: letter, isBlank: square.isBlank)
+            }
+        }
+
+        var savedPlayers: [SavedPlayer] = []
+        let numPlayers = Int(bridge.numberOfPlayers())
+        for i in 0..<numPlayers {
+            let rackLetters = bridge.rack(forPlayerIndex: Int32(i)) as [String]
+            savedPlayers.append(SavedPlayer(
+                name: bridge.name(forPlayerIndex: Int32(i)),
+                isHuman: bridge.name(forPlayerIndex: Int32(i)) != "AI",
+                score: Int(bridge.score(forPlayerIndex: Int32(i))),
+                rack: rackLetters
+            ))
+        }
+
+        let savedBag = bridge.bagTiles() as [String]
+
+        let state = SavedGameState(
+            humanFirst: humanFirst,
+            skillLevel: skillLevel,
+            board: savedBoard,
+            players: savedPlayers,
+            bag: savedBag,
+            isGameOver: isGameOver,
+            isHumanTurn: isHumanTurn,
+            moveHistory: moveHistory
+        )
+
+        if let data = try? JSONEncoder().encode(state) {
+            UserDefaults.standard.set(data, forKey: "savedGameState")
+        }
+    }
+
+    func loadSavedGame() -> Bool {
+        guard let data = UserDefaults.standard.data(forKey: "savedGameState"),
+              let state = try? JSONDecoder().decode(SavedGameState.self, from: data) else {
+            return false
+        }
+
+        // Restore skill level before computing meanLoss/stdDev
+        skillLevel = state.skillLevel
+
+        let boardLetters: [[String]] = state.board.map { row in
+            row.map { tile in tile?.letter ?? "" }
+        }
+        let boardBlanks: [[NSNumber]] = state.board.map { row in
+            row.map { tile in NSNumber(value: tile?.isBlank ?? false) }
+        }
+
+        let scores = state.players.map { NSNumber(value: $0.score) }
+        let racks = state.players.map { $0.rack }
+
+        bridge.restoreGame(
+            withHumanName: "You",
+            humanFirst: state.humanFirst,
+            aiMeanLoss: skillMeanLoss,
+            aiStdDev: skillStdDev,
+            boardLetters: boardLetters,
+            boardBlanks: boardBlanks,
+            playerScores: scores,
+            playerRacks: racks,
+            bagTiles: state.bag,
+            currentPlayerIsHuman: state.isHumanTurn
+        )
+
+        humanFirst = state.humanFirst
+        moveHistory = state.moveHistory
+        tentativePlacements = []
+        errorMessage = nil
+        refreshState()
+
+        // Override gameOver from saved state (C++ may not detect it without history)
+        if state.isGameOver {
+            isGameOver = true
+        }
+
+        // If it's the AI's turn, trigger AI play
+        if !isHumanTurn && !isGameOver {
+            Task {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                triggerAIIfNeeded()
+            }
+        }
+
+        print("[QuackleEngine] Restored saved game")
+        return true
     }
 }

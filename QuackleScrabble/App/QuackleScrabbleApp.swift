@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct QuackleScrabbleApp: App {
     @State private var engine = QuackleEngine()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -16,5 +17,10 @@ struct QuackleScrabbleApp: App {
         .defaultSize(width: 500, height: 860)
         .windowResizability(.contentSize)
         #endif
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background || phase == .inactive {
+                engine.saveGameState()
+            }
+        }
     }
 }
