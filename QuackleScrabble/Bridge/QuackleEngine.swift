@@ -117,7 +117,7 @@ class QuackleEngine {
         loadingProgress = 0.0
 
         let bridge = self.bridge
-        let lexicon = "twl06"
+        let lexicon = "csw19"
 
         Task.detached {
             bridge.initStage1Setup(withDataPath: dataPath)

@@ -83,7 +83,7 @@ static std::string nsToStd(NSString *s) {
 - (void)initStage1SetupWithDataPath:(NSString *)dataPath {
     std::string dataDir = nsToStd(dataPath);
     _dataManager.setComputerPlayers(ComputerPlayerCollection::fullCollection());
-    _dataManager.setBackupLexicon("twl06");
+    _dataManager.setBackupLexicon("csw19");
     _dataManager.setAppDataDirectory(dataDir);
     _dataManager.setAlphabetParameters(new EnglishAlphabetParameters);
     _dataManager.setBoardParameters(new ScrabbleBoard());

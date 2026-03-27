@@ -32,4 +32,4 @@ xcodebuild -project QuackleScrabble.xcodeproj -scheme QuackleScrabble -destinati
 - LetterString is FixedLengthString (max 40 chars); use LongLetterString (std::string) for bag-sized data
 - Bag() default constructor calls prepareFullBag(); always call clear() before toss() when restoring
 - Bundle ID: `com.bef.quacklescrabble`
-- Lexicon: TWL06
+- Lexicon: CSW19
