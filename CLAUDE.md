@@ -29,5 +29,6 @@ xcodebuild -project QuackleScrabble.xcodeproj -scheme QuackleScrabble -destinati
 - Rack tiles can be reordered by dragging within the rack (animated live preview)
 - Game state persists across launches via UserDefaults (auto-saves after each move)
 - LetterString is FixedLengthString (max 40 chars); use LongLetterString (std::string) for bag-sized data
+- Bag() default constructor calls prepareFullBag(); always call clear() before toss() when restoring
 - Bundle ID: `com.bef.quacklescrabble`
 - Lexicon: TWL06

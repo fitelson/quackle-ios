@@ -543,6 +543,7 @@ static std::string nsToStd(NSString *s) {
             bagLong += encoded[i];
     }
     Bag restoredBag;
+    restoredBag.clear();  // default constructor fills with 100 tiles; must clear first
     restoredBag.toss(bagLong);
     _game->currentPosition().setBag(restoredBag);
 
