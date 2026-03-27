@@ -716,7 +716,8 @@ class QuackleEngine {
         }
         board = newBoard
 
-        let rackLetters = bridge.currentPlayerRack()
+        let humanIndex: Int32 = humanFirst ? 0 : 1
+        let rackLetters = bridge.rack(forPlayerIndex: humanIndex) as [String]
         rack = rackLetters.map { letter in
             TileModel(letter: letter, points: TileModel.tilePoints[letter] ?? 0, isBlank: letter == "?")
         }
