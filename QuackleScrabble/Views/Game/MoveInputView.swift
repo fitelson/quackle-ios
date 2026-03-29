@@ -26,14 +26,6 @@ struct MoveInputView: View {
                 .font(.system(size: 15))
                 .buttonStyle(.bordered)
 
-                if engine.gameMode == .ai {
-                    Button("Skill") {
-                        engine.showSkillSlider = true
-                    }
-                    .font(.system(size: 15))
-                    .buttonStyle(.bordered)
-                }
-
                 Button("New") {
                     if engine.gameMode == .multiplayer && !engine.isGameOver {
                         showForfeitAlert = true
@@ -42,6 +34,26 @@ struct MoveInputView: View {
                     }
                 }
                 .font(.system(size: 15))
+                .buttonStyle(.bordered)
+
+                Menu {
+                    Button("AI Skill Level") {
+                        engine.showSkillSlider = true
+                    }
+                    if engine.gameMode == .multiplayer && !engine.isGameOver {
+                        Button("Switch to AI Game") {
+                            engine.switchToAIGame()
+                        }
+                    }
+                    if engine.gameMode != .multiplayer && gameCenterManager.hasActiveMatch {
+                        Button("Resume Online Game") {
+                            gameCenterManager.resumeCurrentMatch()
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 15))
+                }
                 .buttonStyle(.bordered)
             }
 

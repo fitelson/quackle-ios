@@ -58,6 +58,13 @@ xcodebuild -project QuackleScrabble.xcodeproj -scheme QuackleScrabble -destinati
 - Bridge has separate methods for AI games (startNewGame/restoreGame) and two-human games (startNewTwoHumanGame/restoreTwoHumanGame)
 - Game state persistence (UserDefaults) only applies to AI mode; multiplayer state lives in GameKit match data
 - ModeSelectionView shown on first launch (no saved game) or when user taps New
+- "…" Menu next to New button: AI Skill Level (always), Switch to AI Game (in multiplayer), Resume Online Game (in AI with active match)
+- Game switching preserves both games: AI saves to UserDefaults, multiplayer lives in Game Center match data
+- switchToAIGame() loads saved AI game or starts new; preserves onMultiplayerMoveCommitted callback
+- resumeCurrentMatch() refreshes match from Game Center and calls handleMatchFound
+- Turn event callbacks (receivedTurnEventFor, matchEnded) only switch to multiplayer when already in multiplayer mode; otherwise silently update match reference
+- loadActiveMatch() called after Game Center authentication; queries for open matches so "Resume Online Game" works across app restarts and devices
+- Same online game can be open on multiple devices (iPhone + Mac) — Game Center match data is server-side; both see same state
 - QuackleBridge critical methods (startNewGame, haveComputerPlay, kibitzMoves, commitMove, restore*, moveHistory) are wrapped in C++ try/catch to prevent exceptions from crossing the ObjC boundary
 - QuackleEngine uses a serial `bridgeQueue` (DispatchQueue) for background bridge work (init, AI play) via `withCheckedContinuation`, avoiding `Task.detached`
 - AI/opponent move animations tracked via `animationTask` property; previous animation cancelled before starting new one

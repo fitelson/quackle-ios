@@ -989,6 +989,17 @@ class QuackleEngine {
         return true
     }
 
+    // MARK: - Game Switching
+
+    func switchToAIGame() {
+        if !loadSavedGame() {
+            // No saved AI game — start fresh but preserve multiplayer callback
+            let callback = onMultiplayerMoveCommitted
+            startNewGame()
+            onMultiplayerMoveCommitted = callback
+        }
+    }
+
     // MARK: - Pass & Play
 
     func startPassAndPlayGame(player1Name: String, player2Name: String) {

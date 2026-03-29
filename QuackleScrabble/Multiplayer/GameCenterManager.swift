@@ -31,7 +31,30 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                     self.localDisplayName = player.displayName
                     self.authError = nil
                     GKLocalPlayer.local.register(self)
+                    self.loadActiveMatch()
                 }
+            }
+        }
+    }
+
+    // MARK: - Load Active Match (on launch)
+
+    func loadActiveMatch() {
+        Task {
+            do {
+                let matches = try await GKTurnBasedMatch.loadMatches()
+                for match in matches {
+                    guard match.status == .open,
+                          let data = match.matchData, !data.isEmpty else { continue }
+                    if let state = try? JSONDecoder().decode(MultiplayerGameState.self, from: data),
+                       !state.isGameOver {
+                        self.currentMatch = match
+                        print("[GameCenter] Found active match on launch: \(match.matchID)")
+                        return
+                    }
+                }
+            } catch {
+                print("[GameCenter] loadActiveMatch error: \(error.localizedDescription)")
             }
         }
     }
@@ -286,6 +309,33 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
         }
     }
 
+    // MARK: - Game Switching
+
+    var hasActiveMatch: Bool {
+        guard let match = currentMatch else { return false }
+        return match.status == .open
+    }
+
+    func resumeCurrentMatch() {
+        guard let match = currentMatch, let engine else { return }
+
+        // Save current AI game before switching
+        if engine.gameMode == .ai {
+            engine.saveGameState()
+        }
+
+        Task {
+            do {
+                let refreshed = try await GKTurnBasedMatch.load(withID: match.matchID)
+                self.currentMatch = refreshed
+                self.handleMatchFound(refreshed)
+            } catch {
+                print("[GameCenter] resumeMatch error: \(error.localizedDescription)")
+                engine.errorMessage = "Failed to resume match: \(error.localizedDescription)"
+            }
+        }
+    }
+
     // MARK: - Polling
 
     func pollForMatchUpdate() {
@@ -325,6 +375,12 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
             print("[GameCenter] receivedTurnEvent: didBecomeActive=\(didBecomeActive), hasData=\(hasData), dataSize=\(match.matchData?.count ?? 0)")
             self.currentMatch = match
 
+            // If not in multiplayer mode (e.g., playing AI), just update match reference silently
+            guard self.engine?.gameMode == .multiplayer || self.isWaitingForOpponent else {
+                print("[GameCenter] receivedTurnEvent: not in multiplayer mode, updating match reference only")
+                return
+            }
+
             if let data = match.matchData, !data.isEmpty,
                let state = try? JSONDecoder().decode(MultiplayerGameState.self, from: data) {
                 print("[GameCenter] receivedTurnEvent: decoded state, currentPlayer=\(state.currentPlayerIndex)")
@@ -340,6 +396,9 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
         Task { @MainActor [weak self] in
             guard let self else { return }
             print("[GameCenter] matchEnded")
+            self.currentMatch = match
+            // Only update game state if currently in multiplayer
+            guard self.engine?.gameMode == .multiplayer else { return }
             if let data = match.matchData, !data.isEmpty,
                let state = try? JSONDecoder().decode(MultiplayerGameState.self, from: data) {
                 self.loadMatchState(state, from: match)
