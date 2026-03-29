@@ -162,34 +162,34 @@ struct GameView: View {
         #if os(macOS)
         .frame(width: 500, height: 860)
         #endif
-        .sheet(isPresented: $engine.showBlankPicker) {
-            BlankPickerView()
-                .environment(engine)
-                #if os(iOS)
-                .presentationDetents([.medium])
-                #endif
-        }
-        .sheet(isPresented: $engine.showMoves) {
-            TopMovesView()
-                .environment(engine)
-                #if os(iOS)
-                .presentationDetents([.large])
-                .interactiveDismissDisabled()
-                #endif
-        }
-        .sheet(isPresented: $engine.showHistory) {
-            HistoryView()
-                .environment(engine)
-                #if os(iOS)
-                .presentationDetents([.large])
-                #endif
-        }
-        .sheet(isPresented: $engine.showSkillSlider) {
-            SkillSliderView()
-                .environment(engine)
-                #if os(iOS)
-                .presentationDetents([.height(200)])
-                #endif
+        .sheet(item: $engine.activeSheet) { sheet in
+            switch sheet {
+            case .blankPicker:
+                BlankPickerView()
+                    .environment(engine)
+                    #if os(iOS)
+                    .presentationDetents([.medium])
+                    #endif
+            case .topMoves:
+                TopMovesView()
+                    .environment(engine)
+                    #if os(iOS)
+                    .presentationDetents([.large])
+                    .interactiveDismissDisabled()
+                    #endif
+            case .history:
+                HistoryView()
+                    .environment(engine)
+                    #if os(iOS)
+                    .presentationDetents([.large])
+                    #endif
+            case .skillSlider:
+                SkillSliderView()
+                    .environment(engine)
+                    #if os(iOS)
+                    .presentationDetents([.height(200)])
+                    #endif
+            }
         }
         .task(id: engine.gameMode == .multiplayer && !engine.isLocalPlayerTurn && !engine.isGameOver) {
             let shouldPoll = engine.gameMode == .multiplayer && !engine.isLocalPlayerTurn && !engine.isGameOver
@@ -233,7 +233,7 @@ struct BlankPickerView: View {
             .padding()
 
             Button("Cancel") {
-                engine.showBlankPicker = false
+                engine.activeSheet = nil
             }
             .padding(.bottom)
         }

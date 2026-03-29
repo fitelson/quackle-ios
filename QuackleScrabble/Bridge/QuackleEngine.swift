@@ -2,6 +2,14 @@ import Foundation
 import Observation
 import SwiftUI
 
+// QuackleBridge is thread-safe via bridgeQueue serialization
+extension QuackleBridge: @unchecked Sendable {}
+
+enum ActiveSheet: Identifiable {
+    case blankPicker, topMoves, history, skillSlider
+    var id: Self { self }
+}
+
 enum BonusType {
     case none, doubleLetter, tripleLetter, doubleWord, tripleWord
 }
@@ -77,7 +85,7 @@ class QuackleEngine {
     var isTentativeMoveValid: Bool = false  // real-time validation
     var tentativeMoveScore: Int = 0  // score preview for valid tentative move
     var tentativeMoveString: String? = nil  // the built move string
-    var showBlankPicker: Bool = false  // show letter picker for blank tile
+    var activeSheet: ActiveSheet? = nil  // single sheet presentation
     var pendingBlankRow: Int = -1
     var pendingBlankCol: Int = -1
 
@@ -97,11 +105,8 @@ class QuackleEngine {
     var rackReorderIndex: Int? = nil  // live preview index during rack drag
     var isExchangeMode: Bool = false  // exchange tile selection mode
     var exchangeSelectedIds: Set<UUID> = []  // rack tiles selected for exchange
-    var showSkillSlider: Bool = false
     var skillLevel: Double = 0.5  // 0=low, 0.5=medium, 1=high
-    var showHistory: Bool = false
     var moveHistory: [MoveHistoryEntry] = []
-    var showMoves: Bool = false
     var topMoves: [MoveModel] = []
     var humanFirst: Bool = true
     var showModeSelection: Bool = false
@@ -135,6 +140,14 @@ class QuackleEngine {
         guard let dataPath = Bundle.main.path(forResource: "data", ofType: nil) else {
             errorMessage = "Could not find data directory in bundle"
             return
+        }
+
+        // Clear saved AI game if app version changed (avoids stale state)
+        let currentBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+        let savedBuild = UserDefaults.standard.string(forKey: "lastAppBuild") ?? ""
+        if currentBuild != savedBuild {
+            UserDefaults.standard.removeObject(forKey: "savedGameState")
+            UserDefaults.standard.set(currentBuild, forKey: "lastAppBuild")
         }
 
         loadingStatus = "Setting up engine..."
@@ -322,7 +335,7 @@ class QuackleEngine {
                 if tile.isBlank {
                     pendingBlankRow = row
                     pendingBlankCol = col
-                    showBlankPicker = true
+                    activeSheet = .blankPicker
                 } else {
                     placeTile(letter: tile.letter, isBlank: false, atRow: row, col: col)
                 }
@@ -342,7 +355,7 @@ class QuackleEngine {
 
     func placeBlankAs(letter: String) {
         placeTile(letter: letter, isBlank: true, atRow: pendingBlankRow, col: pendingBlankCol)
-        showBlankPicker = false
+        activeSheet = nil
     }
 
     func placeTile(letter: String, isBlank: Bool, atRow row: Int, col: Int) {
@@ -611,14 +624,14 @@ class QuackleEngine {
         if gameMode != .multiplayer {
             refreshMoveHistory()
         }
-        showHistory = true
+        activeSheet = .history
     }
 
     // MARK: - Top Moves
 
     func generateTopMoves() {
         topMoves = kibitz(count: 50)
-        showMoves = true
+        activeSheet = .topMoves
     }
 
     // MARK: - Shuffle

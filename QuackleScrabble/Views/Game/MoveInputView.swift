@@ -38,7 +38,7 @@ struct MoveInputView: View {
 
                 Menu {
                     Button("AI Skill Level") {
-                        engine.showSkillSlider = true
+                        engine.activeSheet = .skillSlider
                     }
                     if engine.gameMode == .multiplayer && !engine.isGameOver {
                         Button("Switch to AI Game") {
