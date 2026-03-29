@@ -36,7 +36,7 @@ NS_ASSUME_NONNULL_BEGIN
 // Staged initialization (for progress reporting)
 - (void)initStage1SetupWithDataPath:(NSString *)dataPath;
 - (BOOL)initStage2LoadDawg:(NSString *)lexicon;
-- (void)initStage3LoadGaddag:(NSString *)lexicon;
+- (BOOL)initStage3LoadGaddag:(NSString *)lexicon;
 - (void)initStage4LoadStrategy:(NSString *)lexicon;
 - (void)initStageFinalize;
 
@@ -66,6 +66,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (int)turnNumber;
 
 // Move operations
+// Convention: collection methods return empty arrays on error/no-data;
+// single-object methods (haveComputerPlay) return nullable nil on error.
 - (NSArray<QBMoveInfo *> *)kibitzMoves:(int)count;
 - (int)validateMoveString:(NSString *)moveString;
 - (int)scoreMoveString:(NSString *)moveString;

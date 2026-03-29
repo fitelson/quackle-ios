@@ -32,7 +32,8 @@ struct QuackleScrabbleApp: App {
     }
 
     private func setupMultiplayerCallback() {
-        engine.onMultiplayerMoveCommitted = { [engine, gameCenterManager] in
+        engine.onMultiplayerMoveCommitted = { [weak engine, weak gameCenterManager] in
+            guard let engine, let gameCenterManager else { return }
             print("[Multiplayer] Move committed, exporting state...")
             let state = engine.exportMultiplayerState()
             guard let data = try? JSONEncoder().encode(state) else {

@@ -22,6 +22,7 @@ xcodebuild -project QuackleScrabble.xcodeproj -scheme QuackleScrabble -destinati
 - `QuackleScrabble/Views/Game/` — OpponentRackView, AIAnimationOverlay, ScoreboardView, MoveInputView, ModeSelectionView
 - `QuackleScrabble/Multiplayer/` — GameCenterManager, MultiplayerGameState
 - `QuackleScrabble/QuackleScrabble.entitlements` — Game Center capability
+- `QuackleScrabbleTests/` — Unit tests (ModelTests: Codable roundtrips, tile points, UUID identity)
 
 ## Key conventions
 
@@ -42,8 +43,8 @@ xcodebuild -project QuackleScrabble.xcodeproj -scheme QuackleScrabble -destinati
 - Opponent display names resolved from match participants when loading state (handles late-join)
 - GameCenterManager conforms to GKLocalPlayerListener for turn event callbacks
 - receivedTurnEventFor only clears isWaitingForOpponent when match data exists (prevents spurious callback race)
-- Both WaitingForOpponentView and GameView poll Game Center every 3s for match updates (fallback for unreliable callbacks)
-- QuackleEngine.onMultiplayerMoveCommitted callback wired in QuackleScrabbleApp to submit turns
+- Both WaitingForOpponentView and GameView poll Game Center every 3s via `.task`-based async loops (auto-cancelled when conditions change)
+- QuackleEngine.onMultiplayerMoveCommitted callback wired in QuackleScrabbleApp to submit turns (weak captures to avoid retain cycle)
 - isLocalPlayerTurn is a stored property updated in refreshState(), not computed (bridge calls aren't tracked by @Observable)
 - Multiplayer move history managed via MultiplayerGameState serialization, not bridge (bridge only has moves since last restore)
 - appendLatestMoveToHistory() reads bridge history post-commit and appends to accumulated moveHistory
@@ -57,3 +58,18 @@ xcodebuild -project QuackleScrabble.xcodeproj -scheme QuackleScrabble -destinati
 - Bridge has separate methods for AI games (startNewGame/restoreGame) and two-human games (startNewTwoHumanGame/restoreTwoHumanGame)
 - Game state persistence (UserDefaults) only applies to AI mode; multiplayer state lives in GameKit match data
 - ModeSelectionView shown on first launch (no saved game) or when user taps New
+- QuackleBridge critical methods (startNewGame, haveComputerPlay, kibitzMoves, commitMove, restore*, moveHistory) are wrapped in C++ try/catch to prevent exceptions from crossing the ObjC boundary
+- QuackleEngine uses a serial `bridgeQueue` (DispatchQueue) for background bridge work (init, AI play) via `withCheckedContinuation`, avoiding `Task.detached`
+- AI/opponent move animations tracked via `animationTask` property; previous animation cancelled before starting new one
+- initStage3LoadGaddag returns BOOL (NO if GADDAG file not found; move generation still works, just slower)
+- Board restoration validates rowBlanks array bounds before access (guards against mismatched array sizes)
+- RNG in haveComputerPlay seeded via `std::random_device` (not `std::time`)
+- loadMatchState tracks matched players with flags to prevent double-assignment when player2GameCenterID is empty
+- forfeitMatch uses do/catch with error reporting (not silent try?)
+- BlankPickerView sets engine state directly (no dismiss()+asyncAfter delay)
+- buildMoveString uses guard-let for UnicodeScalar (no force unwrap)
+- Module name is "Scrabble" (matches PRODUCT_NAME), use `@testable import Scrabble` in tests
+- DataManager/ComputerPlayer ownership documented in QuackleBridge.mm comments
+- Bridge return contract: collections return empty arrays, single objects return nullable nil (documented in QuackleBridge.h)
+- Submit button uses explicit Text label with `.fixedSize()` to prevent macOS button text truncation (score was clipped without it)
+- When copying .app to /Applications on macOS, `rm -rf` the old bundle first — macOS caches the old binary and may launch the stale version if you just `cp` over it

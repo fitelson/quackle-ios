@@ -44,8 +44,6 @@ struct ContentView: View {
 struct GameView: View {
     @Environment(QuackleEngine.self) var engine
     @Environment(GameCenterManager.self) var gameCenterManager
-    let pollTimer = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
-
     var body: some View {
         @Bindable var engine = engine
 
@@ -88,10 +86,13 @@ struct GameView: View {
                                 .font(.system(size: 20, weight: .bold))
                                 .foregroundColor(.orange)
                         } else {
-                            Button("Submit (\(engine.tentativeMoveScore))") {
+                            Button {
                                 engine.commitTentativeMove()
+                            } label: {
+                                Text("Submit (\(engine.tentativeMoveScore))")
+                                    .font(.system(size: 20, weight: .bold))
+                                    .fixedSize()
                             }
-                            .font(.system(size: 20, weight: .bold))
                             .buttonStyle(.borderedProminent)
                             .tint(.green)
                             .controlSize(.large)
@@ -190,8 +191,12 @@ struct GameView: View {
                 .presentationDetents([.height(200)])
                 #endif
         }
-        .onReceive(pollTimer) { _ in
-            if engine.gameMode == .multiplayer && !engine.isLocalPlayerTurn && !engine.isGameOver {
+        .task(id: engine.gameMode == .multiplayer && !engine.isLocalPlayerTurn && !engine.isGameOver) {
+            let shouldPoll = engine.gameMode == .multiplayer && !engine.isLocalPlayerTurn && !engine.isGameOver
+            guard shouldPoll else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard !Task.isCancelled else { break }
                 gameCenterManager.pollForMatchUpdate()
             }
         }
@@ -200,7 +205,6 @@ struct GameView: View {
 
 struct BlankPickerView: View {
     @Environment(QuackleEngine.self) var engine
-    @Environment(\.dismiss) var dismiss
 
     let letters = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
     let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 7)
@@ -214,11 +218,7 @@ struct BlankPickerView: View {
             LazyVGrid(columns: columns, spacing: 8) {
                 ForEach(letters, id: \.self) { letter in
                     Button {
-                        let chosen = String(letter)
-                        dismiss()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            engine.placeBlankAs(letter: chosen)
-                        }
+                        engine.placeBlankAs(letter: String(letter))
                     } label: {
                         Text(String(letter))
                             .font(.system(size: 22, weight: .bold))
@@ -233,10 +233,7 @@ struct BlankPickerView: View {
             .padding()
 
             Button("Cancel") {
-                dismiss()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    engine.showBlankPicker = false
-                }
+                engine.showBlankPicker = false
             }
             .padding(.bottom)
         }
@@ -253,7 +250,7 @@ struct TopMovesView: View {
     var body: some View {
         #if os(iOS)
         NavigationStack {
-            List(Array(engine.topMoves.enumerated()), id: \.element.id) { index, move in
+            List(engine.topMoves) { move in
                 HStack {
                     Text(move.description)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -297,7 +294,7 @@ struct TopMovesView: View {
             .padding(.vertical, 4)
             .background(Color.gray.opacity(0.2))
 
-            List(Array(engine.topMoves.enumerated()), id: \.element.id) { index, move in
+            List(engine.topMoves) { move in
                 HStack {
                     Text(move.description)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -424,8 +421,6 @@ struct SkillSliderView: View {
 struct WaitingForOpponentView: View {
     @Environment(QuackleEngine.self) var engine
     @Environment(GameCenterManager.self) var gameCenterManager
-    let timer = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
-
     var body: some View {
         VStack(spacing: 20) {
             Spacer()
@@ -453,8 +448,12 @@ struct WaitingForOpponentView: View {
         #if os(macOS)
         .frame(width: 500, height: 860)
         #endif
-        .onReceive(timer) { _ in
-            gameCenterManager.pollForMatchUpdate()
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard !Task.isCancelled else { break }
+                gameCenterManager.pollForMatchUpdate()
+            }
         }
     }
 }

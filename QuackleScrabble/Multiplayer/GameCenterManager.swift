@@ -162,9 +162,12 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
 
         // Update display names from resolved match participants
         var updatedState = state
+        var matchedPlayer1 = false
+        var matchedPlayer2 = false
         for p in match.participants {
             guard let player = p.player else { continue }
-            if player.gamePlayerID == state.player1GameCenterID {
+            if !matchedPlayer1 && player.gamePlayerID == updatedState.player1GameCenterID {
+                matchedPlayer1 = true
                 updatedState = MultiplayerGameState(
                     player1GameCenterID: updatedState.player1GameCenterID,
                     player2GameCenterID: updatedState.player2GameCenterID,
@@ -179,8 +182,9 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                     isGameOver: updatedState.isGameOver,
                     consecutiveScorelessTurns: updatedState.consecutiveScorelessTurns
                 )
-            } else if player.gamePlayerID == state.player2GameCenterID ||
-                      state.player2GameCenterID.isEmpty {
+            } else if !matchedPlayer2 && (player.gamePlayerID == updatedState.player2GameCenterID ||
+                      updatedState.player2GameCenterID.isEmpty) {
+                matchedPlayer2 = true
                 updatedState = MultiplayerGameState(
                     player1GameCenterID: updatedState.player1GameCenterID,
                     player2GameCenterID: player.gamePlayerID,
@@ -258,18 +262,23 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
         let isMyTurn = match.currentParticipant?.player?.gamePlayerID == localPlayerID
 
         Task {
-            if isMyTurn {
-                let nextParticipants = match.participants.filter {
-                    $0.player?.gamePlayerID != self.localPlayerID
+            do {
+                if isMyTurn {
+                    let nextParticipants = match.participants.filter {
+                        $0.player?.gamePlayerID != self.localPlayerID
+                    }
+                    try await match.participantQuitInTurn(
+                        with: .quit,
+                        nextParticipants: nextParticipants,
+                        turnTimeout: GKTurnTimeoutDefault,
+                        match: match.matchData ?? Data()
+                    )
+                } else {
+                    try await match.participantQuitOutOfTurn(with: .quit)
                 }
-                try? await match.participantQuitInTurn(
-                    with: .quit,
-                    nextParticipants: nextParticipants,
-                    turnTimeout: GKTurnTimeoutDefault,
-                    match: match.matchData ?? Data()
-                )
-            } else {
-                try? await match.participantQuitOutOfTurn(with: .quit)
+            } catch {
+                print("[GameCenter] forfeit failed: \(error.localizedDescription)")
+                self.engine?.errorMessage = "Failed to forfeit: \(error.localizedDescription)"
             }
             self.currentMatch = nil
             self.isWaitingForOpponent = false

@@ -126,8 +126,10 @@ class QuackleEngine {
     var aiAnimTiles: [AIAnimTile] = []
     var opponentRackOrigin: CGPoint = .zero  // top-left of opponent rack in "game" space
     var opponentTileSize: CGFloat = 24
+    private var animationTask: Task<Void, Never>?
 
     private let bridge: QuackleBridge = QuackleBridge.shared()
+    private let bridgeQueue = DispatchQueue(label: "com.bef.quackle.bridge")
 
     func initialize() {
         guard let dataPath = Bundle.main.path(forResource: "data", ofType: nil) else {
@@ -140,43 +142,47 @@ class QuackleEngine {
 
         let bridge = self.bridge
         let lexicon = "csw19"
+        let queue = self.bridgeQueue
 
-        Task.detached {
-            bridge.initStage1Setup(withDataPath: dataPath)
-            await MainActor.run {
-                self.loadingProgress = 0.25
-                self.loadingStatus = "Loading dictionary..."
+        Task {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                queue.async { bridge.initStage1Setup(withDataPath: dataPath); c.resume() }
             }
+            self.loadingProgress = 0.25
+            self.loadingStatus = "Loading dictionary..."
 
-            let dawgOK = bridge.initStage2LoadDawg(lexicon)
+            let dawgOK = await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
+                queue.async { c.resume(returning: bridge.initStage2LoadDawg(lexicon)) }
+            }
             guard dawgOK else {
-                await MainActor.run { self.errorMessage = "Failed to load dictionary" }
+                self.errorMessage = "Failed to load dictionary"
                 return
             }
-            await MainActor.run {
-                self.loadingProgress = 0.50
-                self.loadingStatus = "Loading word graph..."
-            }
+            self.loadingProgress = 0.50
+            self.loadingStatus = "Loading word graph..."
 
-            bridge.initStage3LoadGaddag(lexicon)
-            await MainActor.run {
-                self.loadingProgress = 0.75
-                self.loadingStatus = "Loading strategy..."
+            let gaddagOK = await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
+                queue.async { c.resume(returning: bridge.initStage3LoadGaddag(lexicon)) }
             }
-
-            bridge.initStage4LoadStrategy(lexicon)
-            await MainActor.run {
-                self.loadingProgress = 0.90
-                self.loadingStatus = "Starting game..."
+            if !gaddagOK {
+                print("[QuackleEngine] Warning: GADDAG not loaded — move generation will be slower")
             }
+            self.loadingProgress = 0.75
+            self.loadingStatus = "Loading strategy..."
 
-            bridge.initStageFinalize()
-            await MainActor.run {
-                self.loadingProgress = 1.0
-                self.isInitialized = true
-                if !self.loadSavedGame() {
-                    self.showModeSelection = true
-                }
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                queue.async { bridge.initStage4LoadStrategy(lexicon); c.resume() }
+            }
+            self.loadingProgress = 0.90
+            self.loadingStatus = "Starting game..."
+
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                queue.async { bridge.initStageFinalize(); c.resume() }
+            }
+            self.loadingProgress = 1.0
+            self.isInitialized = true
+            if !self.loadSavedGame() {
+                self.showModeSelection = true
             }
         }
     }
@@ -418,10 +424,8 @@ class QuackleEngine {
 
         print("[QuackleEngine] Committing move: \(moveString)")
 
-        // Do the commit on next run loop to avoid SwiftUI mutation during render
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-
+        // Defer commit to avoid SwiftUI mutation during render
+        Task {
             let committed = self.bridge.commitMove(moveString)
             if committed {
                 self.tentativePlacements = []
@@ -499,7 +503,8 @@ class QuackleEngine {
             }
 
             // Position string: row (1-indexed) + column letter, e.g. "8H"
-            let colLetter = String(UnicodeScalar(65 + startCol)!)
+            guard let scalar = UnicodeScalar(65 + startCol) else { return nil }
+            let colLetter = String(scalar)
             let posString = "\(startRow + 1)\(colLetter)"
             return "\(posString) \(word)"
 
@@ -533,7 +538,8 @@ class QuackleEngine {
             }
 
             // Vertical: column letter + row, e.g. "H8"
-            let colLetter = String(UnicodeScalar(65 + startCol)!)
+            guard let scalar = UnicodeScalar(65 + startCol) else { return nil }
+            let colLetter = String(scalar)
             let posString = "\(colLetter)\(startRow + 1)"
             return "\(posString) \(word)"
         }
@@ -704,16 +710,16 @@ class QuackleEngine {
     private func triggerAIIfNeeded() {
         if !isHumanTurn && !isGameOver {
             let bridge = self.bridge
-            Task.detached {
-                let result = bridge.haveComputerPlay()
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    if let result, result.moveType == 0,
-                       !result.placedTiles.isEmpty {
-                        self.animateAIMove(tiles: result.placedTiles)
-                    } else {
-                        self.refreshState()
-                    }
+            let queue = self.bridgeQueue
+            Task {
+                let result = await withCheckedContinuation { (c: CheckedContinuation<QBMoveInfo?, Never>) in
+                    queue.async { c.resume(returning: bridge.haveComputerPlay()) }
+                }
+                if let result, result.moveType == 0,
+                   !result.placedTiles.isEmpty {
+                    self.animateAIMove(tiles: result.placedTiles)
+                } else {
+                    self.refreshState()
                 }
             }
         }
@@ -751,16 +757,20 @@ class QuackleEngine {
         isAnimatingAIMove = true
 
         // Phase 0: face-down at rack → Phase 1: flip face-up in rack → Phase 2: fly to board
-        Task { @MainActor in
+        animationTask?.cancel()
+        animationTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
             withAnimation(.easeInOut(duration: 0.4)) {
                 self.aiAnimPhase = 1  // flip in place
             }
             try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
             withAnimation(.easeInOut(duration: 0.5)) {
                 self.aiAnimPhase = 2  // fly to board
             }
             try? await Task.sleep(nanoseconds: 600_000_000)
+            guard !Task.isCancelled else { return }
             self.isAnimatingAIMove = false
             self.aiAnimTiles = []
             self.aiAnimPhase = 0
@@ -1113,16 +1123,20 @@ class QuackleEngine {
             // Refresh state but we'll overlay the animation
             refreshState()
 
-            Task { @MainActor in
+            animationTask?.cancel()
+            animationTask = Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 200_000_000)
+                guard !Task.isCancelled else { return }
                 withAnimation(.easeInOut(duration: 0.4)) {
                     self.aiAnimPhase = 1  // flip face-up
                 }
                 try? await Task.sleep(nanoseconds: 500_000_000)
+                guard !Task.isCancelled else { return }
                 withAnimation(.easeInOut(duration: 0.5)) {
                     self.aiAnimPhase = 2  // fly to board
                 }
                 try? await Task.sleep(nanoseconds: 600_000_000)
+                guard !Task.isCancelled else { return }
                 self.isAnimatingAIMove = false
                 self.aiAnimTiles = []
                 self.aiAnimPhase = 0
