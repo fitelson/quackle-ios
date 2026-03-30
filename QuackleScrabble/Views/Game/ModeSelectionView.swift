@@ -25,6 +25,22 @@ struct ModeSelectionView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.blue)
 
+                if gameCenterManager.hasActiveMatch {
+                    Button {
+                        gameCenterManager.resumeCurrentMatch()
+                    } label: {
+                        HStack {
+                            Image(systemName: "wifi")
+                            Text("Resume Online Game")
+                        }
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                }
+
                 Button {
                     gameCenterManager.findOrCreateMatch()
                 } label: {
@@ -35,7 +51,7 @@ struct ModeSelectionView: View {
                             Text("Finding match...")
                         } else {
                             Image(systemName: "wifi")
-                            Text("Play Online")
+                            Text(gameCenterManager.hasActiveMatch ? "New Online Game" : "Play Online")
                         }
                     }
                     .font(.system(size: 18, weight: .semibold))
@@ -43,7 +59,7 @@ struct ModeSelectionView: View {
                     .padding(.vertical, 12)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.green)
+                .tint(gameCenterManager.hasActiveMatch ? .orange : .green)
                 .disabled(!gameCenterManager.isAuthenticated || gameCenterManager.isFinding)
 
                 if !gameCenterManager.isAuthenticated {

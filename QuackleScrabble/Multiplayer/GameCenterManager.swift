@@ -31,6 +31,18 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                     self.localDisplayName = player.displayName
                     self.authError = nil
                     GKLocalPlayer.local.register(self)
+                    // Log friends authorization status for debugging
+                    Task {
+                        let friendsStatus = try await GKLocalPlayer.local.loadFriendsAuthorizationStatus()
+                        let statusName = switch friendsStatus {
+                            case .notDetermined: "notDetermined"
+                            case .denied: "denied"
+                            case .restricted: "restricted"
+                            case .authorized: "authorized"
+                            @unknown default: "unknown(\(friendsStatus.rawValue))"
+                        }
+                        print("[GameCenter] Friends authorization: \(statusName)")
+                    }
                     // Restore any pending turn data from a previous failed submission
                     if self.pendingTurnData == nil {
                         self.pendingTurnData = UserDefaults.standard.data(forKey: "pendingTurnData")
@@ -137,7 +149,18 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                     return
                 }
 
-                // 2. No existing match — auto-match (only two players use this app)
+                // 2. No match found — poll for up to 15s in case another device created one
+                for retry in 1...5 {
+                    print("[GameCenter] No match found, retry \(retry)/5 (waiting 3s)...")
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    if let match = try await self.bestPlayableMatch() {
+                        print("[GameCenter]   found match on retry \(retry)")
+                        self.handleMatchFound(match)
+                        return
+                    }
+                }
+
+                // 3. Still nothing after 15s — create via auto-match
                 print("[GameCenter] Creating auto-match...")
                 let request = GKMatchRequest()
                 request.minPlayers = 2
