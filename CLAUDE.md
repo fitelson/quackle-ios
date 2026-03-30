@@ -37,12 +37,13 @@ xcodebuild -project QuackleScrabble.xcodeproj -scheme QuackleScrabble -destinati
 - Bundle ID: `com.bef.quacklescrabble`
 - Lexicon: CSW19
 - GameMode enum: .ai (vs computer), .multiplayer (via Game Center), .passAndPlay (two humans, one device)
-- Multiplayer uses GKTurnBasedMatch with programmatic auto-match (GKTurnBasedMatch.find(for:)), no matchmaker UI
-- findOrCreateMatch() removes ended/finished/quit/forfeited matches; reuses paired in-progress matches
-- findOrCreateMatch() removes unpaired empty matches before calling find(for:) so GC can discover the other player's pending match
-- findOrCreateMatch() also skips matches in forfeitedMatchIDs set (prevents GC propagation-delay from resurrecting forfeited matches)
-- Match status .matching (auto-match pending) treated as playable alongside .open — never remove matching matches as "non-playable"
+- Multiplayer uses GKTurnBasedMatch with direct-invite matching (GKMatchRequest.recipients), not auto-match pool
+- Two known players hardcoded in GameCenterManager.knownPlayerIDs; opponentGamePlayerID computed from localPlayerID
+- GKPlayer.loadPlayers(forIdentifiers:) resolves opponent ID to GKPlayer object for invite
+- findOrCreateMatch() reuses existing open/matching matches; creates direct-invite match if none exist
+- Match status .matching (invite pending) treated as playable alongside .open
 - "…" menu shows "Resume Online Game" (active match) or "Play Online" (no match) when in AI mode; saves AI game before matchmaking
+- TurnBasedMatchmakerView deleted (no matchmaker UI needed with direct invite)
 - Only the currentParticipant initializes a new match; the other player waits for first move
 - Opponent display names resolved from match participants when loading state (handles late-join)
 - GameCenterManager conforms to GKLocalPlayerListener for turn event callbacks

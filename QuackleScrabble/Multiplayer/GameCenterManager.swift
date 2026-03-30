@@ -10,14 +10,19 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
     var localDisplayName = ""
     var authError: String?
     var currentMatch: GKTurnBasedMatch?
-    var showMatchmaker = false
     var isWaitingForOpponent = false
 
     weak var engine: QuackleEngine?
 
-    /// Match IDs we've forfeited locally — skip these in findOrCreateMatch
-    /// even if GC hasn't propagated the quit yet.
-    private var forfeitedMatchIDs: Set<String> = []
+    // The two known players — whichever is local, the other is the opponent
+    private static let knownPlayerIDs = [
+        "A:_efcfe63bc31fd01cf29ea407c71d780a",  // fitelson
+        "A:_ead7114711f507e29d1cf28ac791cfa7"   // Szwarch Of River Twilight
+    ]
+
+    var opponentGamePlayerID: String? {
+        Self.knownPlayerIDs.first { $0 != localPlayerID }
+    }
 
     func authenticate() {
         GKLocalPlayer.local.authenticateHandler = { [weak self] viewController, error in
@@ -86,24 +91,23 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
         Task {
             defer { self.isFinding = false }
             do {
+                // 1. Check for an existing match between us and the opponent
                 let matches = try await GKTurnBasedMatch.loadMatches()
                 print("[GameCenter] Found \(matches.count) existing matches")
 
                 for match in matches {
                     let hasData = match.matchData != nil && !(match.matchData?.isEmpty ?? true)
                     let anyQuit = match.participants.contains { $0.matchOutcome == .quit }
+                    let playable = (match.status == .open || match.status == .matching)
                     print("[GameCenter]   status=\(match.status.rawValue) hasData=\(hasData) anyQuit=\(anyQuit)")
 
-                    let playable = (match.status == .open || match.status == .matching)
-                    if !playable || anyQuit || self.forfeitedMatchIDs.contains(match.matchID) {
-                        // Ended, forfeited, or recently forfeited locally — clean up
+                    if !playable || anyQuit {
                         print("[GameCenter]   removing non-playable match")
                         try? await match.remove()
                         continue
                     }
 
                     if hasData {
-                        // Open match with data — check if game is over
                         if let data = match.matchData,
                            let state = try? JSONDecoder().decode(MultiplayerGameState.self, from: data),
                            state.isGameOver {
@@ -113,29 +117,33 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                         }
                     }
 
-                    // Check if both participants are present (fully paired)
-                    let fullyPaired = match.participants.allSatisfy { $0.player != nil }
-                    if !fullyPaired && !hasData {
-                        // Unpaired match with no game data — remove it so find(for:)
-                        // can discover the other player's pending match instead
-                        print("[GameCenter]   removing unpaired empty match to allow fresh auto-match")
-                        try? await match.remove()
-                        continue
-                    }
-
-                    // Paired or in-progress match — use it
-                    print("[GameCenter]   using existing match (paired=\(fullyPaired))")
+                    print("[GameCenter]   using existing match")
                     self.handleMatchFound(match)
                     return
                 }
 
-                // No existing match — auto-match
-                print("[GameCenter] Starting programmatic auto-match...")
+                // 2. No existing match — create one with direct invite to opponent
+                guard let opponentID = self.opponentGamePlayerID else {
+                    self.engine?.errorMessage = "Unknown opponent — not a registered player"
+                    return
+                }
+                print("[GameCenter] Creating direct-invite match with opponent \(opponentID)...")
+                let opponent: GKPlayer = try await withCheckedThrowingContinuation { cont in
+                    GKPlayer.loadPlayers(forIdentifiers: [opponentID]) { players, error in
+                        if let error { cont.resume(throwing: error) }
+                        else if let player = players?.first { cont.resume(returning: player) }
+                        else { cont.resume(throwing: NSError(domain: "GameCenter", code: -1, userInfo: [NSLocalizedDescriptionKey: "Player not found"])) }
+                    }
+                }
                 let request = GKMatchRequest()
                 request.minPlayers = 2
                 request.maxPlayers = 2
+                request.recipients = [opponent]
+                request.recipientResponseHandler = { player, response in
+                    print("[GameCenter] Recipient \(player.displayName) response: \(response.rawValue)")
+                }
                 let match = try await GKTurnBasedMatch.find(for: request)
-                print("[GameCenter] Auto-match found!")
+                print("[GameCenter] Direct-invite match created with \(opponent.displayName)!")
                 self.handleMatchFound(match)
             } catch {
                 print("[GameCenter] Error: \(error.localizedDescription)")
@@ -174,7 +182,6 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
 
     func handleMatchFound(_ match: GKTurnBasedMatch) {
         currentMatch = match
-        showMatchmaker = false
         ensureMultiplayerCallback()
 
         let isMyTurn = match.currentParticipant?.player?.gamePlayerID == localPlayerID
@@ -400,7 +407,6 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                     try await fresh.participantQuitOutOfTurn(with: .quit)
                 }
                 print("[GameCenter] forfeit: SUCCESS")
-                self.forfeitedMatchIDs.insert(fresh.matchID)
                 self.currentMatch = nil
                 self.isWaitingForOpponent = false
                 self.engine?.showModeSelection = true
