@@ -75,8 +75,8 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
     func loadActiveMatch() {
         Task {
             do {
-                // One-time nuke of all old matches (build 3+)
-                let nukeKey = "matchesNukedBuild3"
+                // One-time nuke of all old matches
+                let nukeKey = "matchesNukedBuild4"
                 if !UserDefaults.standard.bool(forKey: nukeKey) {
                     UserDefaults.standard.set(true, forKey: nukeKey)
                     let all = try await GKTurnBasedMatch.loadMatches()
@@ -273,6 +273,7 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
     func handleMatchFound(_ match: GKTurnBasedMatch) {
         currentMatch = match
         lastLoadedDataSize = 0
+        sharedActiveMatchID = match.matchID
         ensureMultiplayerCallback()
 
         let isMyTurn = match.currentParticipant?.player?.gamePlayerID == localPlayerID
@@ -580,21 +581,12 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                     return
                 }
 
-                // Waiting player: opponent made first move
-                if self.isWaitingForOpponent {
-                    print("[GameCenter] poll: got match data while waiting, loading state")
-                    self.isWaitingForOpponent = false
-                    self.lastLoadedDataSize = data.count
-                    self.loadMatchState(state, from: refreshed)
-                    return
-                }
-                // Non-active player: check if opponent has moved (currentPlayerIndex changed)
-                let localIndex = (state.player1GameCenterID == self.localPlayerID) ? 0 : 1
-                if state.currentPlayerIndex == localIndex {
-                    print("[GameCenter] poll: it's now our turn, loading state")
-                    self.lastLoadedDataSize = data.count
-                    self.loadMatchState(state, from: refreshed)
-                }
+                // Data changed — reload state (covers opponent moves, same-player
+                // moves from another device, and waiting-for-first-move)
+                print("[GameCenter] poll: data changed (\(self.lastLoadedDataSize) → \(data.count)), loading state")
+                self.isWaitingForOpponent = false
+                self.lastLoadedDataSize = data.count
+                self.loadMatchState(state, from: refreshed)
             } catch {
                 print("[GameCenter] poll error: \(error.localizedDescription)")
             }
