@@ -76,7 +76,7 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
         Task {
             do {
                 // One-time nuke of all old matches
-                let nukeKey = "matchesNukedBuild4"
+                let nukeKey = "matchesNukedBuild5"
                 if !UserDefaults.standard.bool(forKey: nukeKey) {
                     UserDefaults.standard.set(true, forKey: nukeKey)
                     let all = try await GKTurnBasedMatch.loadMatches()
@@ -153,24 +153,19 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                 }
             }
 
-            // Keep the best match. Priority:
-            // 1. Has game data (in-progress) beats empty
-            // 2. Fully paired (both participants) beats unpaired
-            // 3. Smallest matchID as final tiebreak
+            // Remove unpaired empty matches — they block auto-match pairing.
+            // KVS handles same-device sync, so this is safe.
+            let fullyPaired = match.participants.allSatisfy { $0.player != nil }
+            if !fullyPaired && !hasData {
+                print("[GameCenter]   removing unpaired empty match \(match.matchID)")
+                try? await match.remove()
+                continue
+            }
+
+            // Keep the best paired/in-progress match
             if let existing = best {
                 let existingHasData = existing.matchData != nil && !(existing.matchData?.isEmpty ?? true)
-                let paired = match.participants.allSatisfy { $0.player != nil }
-                let existingPaired = existing.participants.allSatisfy { $0.player != nil }
-
-                let preferNew: Bool
-                if hasData != existingHasData {
-                    preferNew = hasData
-                } else if paired != existingPaired {
-                    preferNew = paired
-                } else {
-                    preferNew = match.matchID < existing.matchID
-                }
-                if preferNew {
+                if hasData && !existingHasData {
                     print("[GameCenter]   removing duplicate \(existing.matchID)")
                     try? await existing.remove()
                     best = match
