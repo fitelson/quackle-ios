@@ -91,10 +91,11 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
         Task {
             defer { self.isFinding = false }
             do {
-                // 1. Check for an existing match between us and the opponent
+                // 1. Load all matches; keep the best one, remove the rest
                 let matches = try await GKTurnBasedMatch.loadMatches()
                 print("[GameCenter] Found \(matches.count) existing matches")
 
+                var bestMatch: GKTurnBasedMatch?
                 for match in matches {
                     let hasData = match.matchData != nil && !(match.matchData?.isEmpty ?? true)
                     let anyQuit = match.participants.contains { $0.matchOutcome == .quit }
@@ -117,7 +118,26 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                         }
                     }
 
-                    print("[GameCenter]   using existing match")
+                    // Keep the best match: prefer one with data (in-progress) over empty
+                    if let existing = bestMatch {
+                        let existingHasData = existing.matchData != nil && !(existing.matchData?.isEmpty ?? true)
+                        if hasData && !existingHasData {
+                            // New match has data, old doesn't — swap
+                            print("[GameCenter]   removing duplicate empty match")
+                            try? await existing.remove()
+                            bestMatch = match
+                        } else {
+                            // Keep existing, remove this duplicate
+                            print("[GameCenter]   removing duplicate match")
+                            try? await match.remove()
+                        }
+                    } else {
+                        bestMatch = match
+                    }
+                }
+
+                if let match = bestMatch {
+                    print("[GameCenter]   using match")
                     self.handleMatchFound(match)
                     return
                 }
