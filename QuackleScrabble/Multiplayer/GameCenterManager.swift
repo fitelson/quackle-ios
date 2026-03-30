@@ -118,17 +118,23 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                         }
                     }
 
-                    // Keep the best match: prefer one with data (in-progress) over empty
+                    // Keep the best match deterministically so both devices pick the same one:
+                    // 1. Prefer match with data (in-progress) over empty
+                    // 2. Tiebreak by smallest matchID (both devices see the same IDs)
                     if let existing = bestMatch {
                         let existingHasData = existing.matchData != nil && !(existing.matchData?.isEmpty ?? true)
-                        if hasData && !existingHasData {
-                            // New match has data, old doesn't — swap
-                            print("[GameCenter]   removing duplicate empty match")
+                        let preferNew: Bool
+                        if hasData != existingHasData {
+                            preferNew = hasData  // in-progress beats empty
+                        } else {
+                            preferNew = match.matchID < existing.matchID  // deterministic tiebreak
+                        }
+                        if preferNew {
+                            print("[GameCenter]   removing duplicate \(existing.matchID)")
                             try? await existing.remove()
                             bestMatch = match
                         } else {
-                            // Keep existing, remove this duplicate
-                            print("[GameCenter]   removing duplicate match")
+                            print("[GameCenter]   removing duplicate \(match.matchID)")
                             try? await match.remove()
                         }
                     } else {
