@@ -153,12 +153,6 @@ struct GameView: View {
                     .allowsHitTesting(false)
             }
         }
-        .overlay {
-            if engine.showHandoff {
-                HandoffView()
-                    .environment(engine)
-            }
-        }
         #if os(macOS)
         .frame(width: 500, height: 860)
         #endif
@@ -458,40 +452,3 @@ struct WaitingForOpponentView: View {
     }
 }
 
-struct HandoffView: View {
-    @Environment(QuackleEngine.self) var engine
-
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.92)
-                .ignoresSafeArea()
-
-            VStack(spacing: 20) {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 48))
-                    .foregroundColor(.white)
-
-                Text("Hand device to")
-                    .font(.system(size: 18))
-                    .foregroundColor(.white.opacity(0.7))
-
-                Text(engine.handoffPlayerName)
-                    .font(.system(size: 32, weight: .bold))
-                    .foregroundColor(.white)
-
-                Button {
-                    engine.dismissHandoff()
-                } label: {
-                    Text("Ready")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(.white)
-                        .frame(width: 160, height: 50)
-                        .background(Color.blue)
-                        .cornerRadius(12)
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 10)
-            }
-        }
-    }
-}

@@ -17,7 +17,6 @@ enum BonusType {
 enum GameMode {
     case ai
     case multiplayer
-    case passAndPlay
 }
 
 struct TileModel: Identifiable, Equatable {
@@ -119,9 +118,6 @@ class QuackleEngine {
     var consecutiveScorelessTurns: Int = 0
     var onMultiplayerMoveCommitted: (() -> Void)?
 
-    // Pass & Play state
-    var showHandoff: Bool = false
-    var handoffPlayerName: String = ""
 
     var isLocalPlayerTurn: Bool = true
 
@@ -228,7 +224,7 @@ class QuackleEngine {
 
     func startDragFromRack(tile: TileModel) {
         let canDrag = isLocalPlayerTurn || (gameMode == .multiplayer && !isLocalPlayerTurn)
-        guard !isAnimatingAIMove, !showHandoff, canDrag else { return }
+        guard !isAnimatingAIMove, canDrag else { return }
         activeDragSource = .rack(tileId: tile.id)
         activeDragLetter = tile.isBlank ? "?" : tile.letter
         activeDragIsBlank = tile.isBlank
@@ -240,7 +236,7 @@ class QuackleEngine {
 
     func startDragFromBoard(row: Int, col: Int) {
         let canDrag = isLocalPlayerTurn || (gameMode == .multiplayer && !isLocalPlayerTurn)
-        guard !isAnimatingAIMove, !showHandoff, canDrag else { return }
+        guard !isAnimatingAIMove, canDrag else { return }
         guard let placement = tentativeLetterAt(row: row, col: col) else { return }
         activeDragSource = .board(row: row, col: col)
         activeDragLetter = placement.isBlank ? placement.letter.lowercased() : placement.letter
@@ -449,8 +445,6 @@ class QuackleEngine {
                 case .multiplayer:
                     self.appendLatestMoveToHistory()
                     self.onMultiplayerMoveCommitted?()
-                case .passAndPlay:
-                    self.triggerHandoff()
                 case .ai:
                     self.triggerAIIfNeeded()
                 }
@@ -702,7 +696,6 @@ class QuackleEngine {
         case .multiplayer:
             appendLatestMoveToHistory()
             onMultiplayerMoveCommitted?()
-        case .passAndPlay: triggerHandoff()
         case .ai: triggerAIIfNeeded()
         }
     }
@@ -716,7 +709,6 @@ class QuackleEngine {
         case .multiplayer:
             appendLatestMoveToHistory()
             onMultiplayerMoveCommitted?()
-        case .passAndPlay: triggerHandoff()
         case .ai: triggerAIIfNeeded()
         }
     }
@@ -833,7 +825,7 @@ class QuackleEngine {
         }
         board = newBoard
 
-        if gameMode == .multiplayer || gameMode == .passAndPlay {
+        if gameMode == .multiplayer {
             let numPlayers = Int(bridge.numberOfPlayers())
             var newPlayers: [PlayerModel] = []
             for i in 0..<numPlayers {
@@ -850,24 +842,17 @@ class QuackleEngine {
             tilesInBag = Int(bridge.tilesRemainingInBag())
             turnNumber = Int(bridge.turnNumber())
 
-            if gameMode == .multiplayer {
-                isLocalPlayerTurn = Int(bridge.currentPlayerIndex()) == localPlayerIndex
-                let myIndex = Int32(localPlayerIndex)
-                let opponentIndex: Int32 = localPlayerIndex == 0 ? 1 : 0
-                let rackLetters = bridge.rack(forPlayerIndex: myIndex) as [String]
-                rack = rackLetters.map { letter in
-                    TileModel(letter: letter, points: TileModel.tilePoints[letter] ?? 0, isBlank: letter == "?")
-                }
-                updateAvailableRack()
-                opponentTileCount = (bridge.rack(forPlayerIndex: opponentIndex) as [String]).count
-                // Don't call refreshMoveHistory() — bridge only has moves since last restore.
-                // History is managed via MultiplayerGameState serialization + appendLatestMoveToHistory().
-            } else {
-                isLocalPlayerTurn = true  // pass & play: always local
-                // Pass & Play: rack set by refreshPassAndPlayState after handoff dismiss
-                refreshPassAndPlayState()
-                refreshMoveHistory()
+            isLocalPlayerTurn = Int(bridge.currentPlayerIndex()) == localPlayerIndex
+            let myIndex = Int32(localPlayerIndex)
+            let opponentIndex: Int32 = localPlayerIndex == 0 ? 1 : 0
+            let rackLetters = bridge.rack(forPlayerIndex: myIndex) as [String]
+            rack = rackLetters.map { letter in
+                TileModel(letter: letter, points: TileModel.tilePoints[letter] ?? 0, isBlank: letter == "?")
             }
+            updateAvailableRack()
+            opponentTileCount = (bridge.rack(forPlayerIndex: opponentIndex) as [String]).count
+            // Don't call refreshMoveHistory() — bridge only has moves since last restore.
+            // History is managed via MultiplayerGameState serialization + appendLatestMoveToHistory().
         } else {
             // Determine humanFirst from the bridge (player 0's name)
             humanFirst = (bridge.name(forPlayerIndex: 0) == "You")
@@ -1012,48 +997,6 @@ class QuackleEngine {
             startNewGame()
             onMultiplayerMoveCommitted = callback
         }
-    }
-
-    // MARK: - Pass & Play
-
-    func startPassAndPlayGame(player1Name: String, player2Name: String) {
-        bridge.startNewTwoHumanGame(withPlayer1: player1Name, player2: player2Name)
-        gameMode = .passAndPlay
-        showModeSelection = false
-        tentativePlacements = []
-        moveHistory = []
-        errorMessage = nil
-        lastMoveDescription = ""
-        consecutiveScorelessTurns = 0
-        isAnimatingAIMove = false
-        aiAnimTiles = []
-        aiAnimPhase = 0
-        showHandoff = false
-        refreshState()
-    }
-
-    private func triggerHandoff() {
-        guard !isGameOver else { return }
-        handoffPlayerName = bridge.currentPlayerName()
-        showHandoff = true
-    }
-
-    func dismissHandoff() {
-        showHandoff = false
-        refreshPassAndPlayState()
-    }
-
-    private func refreshPassAndPlayState() {
-        // Show the current player's rack (whoever's turn it is)
-        let currentIdx = Int32(bridge.currentPlayerIndex())
-        let otherIdx: Int32 = currentIdx == 0 ? 1 : 0
-
-        let rackLetters = bridge.rack(forPlayerIndex: currentIdx) as [String]
-        rack = rackLetters.map { letter in
-            TileModel(letter: letter, points: TileModel.tilePoints[letter] ?? 0, isBlank: letter == "?")
-        }
-        updateAvailableRack()
-        opponentTileCount = (bridge.rack(forPlayerIndex: otherIdx) as [String]).count
     }
 
     // MARK: - Multiplayer
