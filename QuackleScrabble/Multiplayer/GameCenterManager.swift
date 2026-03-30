@@ -14,6 +14,23 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
 
     weak var engine: QuackleEngine?
 
+    /// iCloud key-value store for sharing active match ID across devices
+    private let kvStore = NSUbiquitousKeyValueStore.default
+    private static let kActiveMatchID = "activeMatchID"
+
+    /// The active match ID, synced across devices via iCloud KVS
+    var sharedActiveMatchID: String? {
+        get { kvStore.string(forKey: Self.kActiveMatchID) }
+        set {
+            if let newValue {
+                kvStore.set(newValue, forKey: Self.kActiveMatchID)
+            } else {
+                kvStore.removeObject(forKey: Self.kActiveMatchID)
+            }
+            kvStore.synchronize()
+            print("[GameCenter] Shared match ID → \(newValue ?? "nil")")
+        }
+    }
 
     func authenticate() {
         GKLocalPlayer.local.authenticateHandler = { [weak self] viewController, error in
@@ -58,9 +75,46 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
     func loadActiveMatch() {
         Task {
             do {
+                // One-time nuke of all old matches (build 3+)
+                let nukeKey = "matchesNukedBuild3"
+                if !UserDefaults.standard.bool(forKey: nukeKey) {
+                    UserDefaults.standard.set(true, forKey: nukeKey)
+                    let all = try await GKTurnBasedMatch.loadMatches()
+                    print("[GameCenter] NUKING \(all.count) old matches")
+                    for m in all { try? await m.remove() }
+                    self.sharedActiveMatchID = nil
+                    self.pendingTurnData = nil
+                    return
+                }
+
+                // Try to load the shared match ID from iCloud KVS
+                kvStore.synchronize()
+                if let matchID = sharedActiveMatchID {
+                    print("[GameCenter] iCloud KVS has active match: \(matchID)")
+                    do {
+                        let match = try await GKTurnBasedMatch.load(withID: matchID)
+                        let playable = (match.status == .open || match.status == .matching)
+                        let anyQuit = match.participants.contains { $0.matchOutcome == .quit }
+                        if playable && !anyQuit {
+                            self.currentMatch = match
+                            print("[GameCenter] Loaded shared match on launch: \(matchID)")
+                            self.retryPendingTurn()
+                            return
+                        } else {
+                            print("[GameCenter] Shared match is no longer playable, clearing")
+                            self.sharedActiveMatchID = nil
+                        }
+                    } catch {
+                        print("[GameCenter] Could not load shared match \(matchID): \(error.localizedDescription)")
+                        self.sharedActiveMatchID = nil
+                    }
+                }
+
+                // Fallback: scan all matches
                 let best = try await bestPlayableMatch()
                 if let best {
                     self.currentMatch = best
+                    self.sharedActiveMatchID = best.matchID
                     print("[GameCenter] Found active match on launch: \(best.matchID)")
                     self.retryPendingTurn()
                 }
@@ -142,31 +196,40 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
         Task {
             defer { self.isFinding = false }
             do {
-                // 1. Find best existing match (cleans up non-playable/duplicates)
+                // 1. Check iCloud KVS for shared match ID from another device
+                kvStore.synchronize()
+                if let matchID = sharedActiveMatchID {
+                    print("[GameCenter] Checking shared match \(matchID)...")
+                    do {
+                        let match = try await GKTurnBasedMatch.load(withID: matchID)
+                        let playable = (match.status == .open || match.status == .matching)
+                        let anyQuit = match.participants.contains { $0.matchOutcome == .quit }
+                        if playable && !anyQuit {
+                            print("[GameCenter]   using shared match from iCloud KVS")
+                            self.handleMatchFound(match)
+                            return
+                        }
+                    } catch {
+                        print("[GameCenter]   shared match not loadable: \(error.localizedDescription)")
+                    }
+                }
+
+                // 2. Find best existing match (cleans up non-playable/duplicates)
                 if let match = try await self.bestPlayableMatch() {
                     print("[GameCenter]   using existing match")
+                    self.sharedActiveMatchID = match.matchID
                     self.handleMatchFound(match)
                     return
                 }
 
-                // 2. No match found — poll for up to 15s in case another device created one
-                for retry in 1...5 {
-                    print("[GameCenter] No match found, retry \(retry)/5 (waiting 3s)...")
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
-                    if let match = try await self.bestPlayableMatch() {
-                        print("[GameCenter]   found match on retry \(retry)")
-                        self.handleMatchFound(match)
-                        return
-                    }
-                }
-
-                // 3. Still nothing after 15s — create via auto-match
+                // 3. No match found — create via auto-match
                 print("[GameCenter] Creating auto-match...")
                 let request = GKMatchRequest()
                 request.minPlayers = 2
                 request.maxPlayers = 2
                 let match = try await GKTurnBasedMatch.find(for: request)
                 print("[GameCenter] Auto-match created: \(match.matchID)")
+                self.sharedActiveMatchID = match.matchID
                 self.handleMatchFound(match)
             } catch {
                 print("[GameCenter] Error: \(error.localizedDescription)")
@@ -420,6 +483,7 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                 print("[GameCenter] forfeit: SUCCESS")
                 self.currentMatch = nil
                 self.pendingTurnData = nil
+                self.sharedActiveMatchID = nil
                 self.isWaitingForOpponent = false
                 self.engine?.showModeSelection = true
             } catch {
@@ -598,6 +662,7 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
         self.isWaitingForOpponent = false
         self.currentMatch = nil
         self.pendingTurnData = nil
+        self.sharedActiveMatchID = nil
         // Go straight to mode selection so the user isn't stuck on a dead game board
         self.engine?.isGameOver = false
         self.engine?.showModeSelection = true
