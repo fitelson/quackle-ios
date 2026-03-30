@@ -2,10 +2,10 @@ import Foundation
 
 struct MultiplayerGameState: Codable {
     let version: Int
-    let player1GameCenterID: String
-    let player2GameCenterID: String
-    let player1DisplayName: String
-    let player2DisplayName: String
+    var player1GameCenterID: String
+    var player2GameCenterID: String
+    var player1DisplayName: String
+    var player2DisplayName: String
     let board: [[SavedTile?]]
     let playerScores: [Int]
     let playerRacks: [[String]]

@@ -432,6 +432,7 @@ struct WaitingForOpponentView: View {
             Spacer()
 
             Button("Cancel") {
+                gameCenterManager.isWaitingForOpponent = false
                 engine.showModeSelection = true
             }
             .font(.system(size: 16))

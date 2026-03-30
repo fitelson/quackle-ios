@@ -55,29 +55,77 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
     func loadActiveMatch() {
         Task {
             do {
-                let matches = try await GKTurnBasedMatch.loadMatches()
-                for match in matches {
-                    let anyQuit = match.participants.contains { $0.matchOutcome == .quit }
-                    guard (match.status == .open || match.status == .matching), !anyQuit else { continue }
-                    guard let data = match.matchData, !data.isEmpty else {
-                        // Matching/open but no data yet — still a valid active match
-                        self.currentMatch = match
-                        print("[GameCenter] Found active match on launch (no data yet): \(match.matchID)")
-                        return
-                    }
-                    if let state = try? JSONDecoder().decode(MultiplayerGameState.self, from: data),
-                       !state.isGameOver {
-                        self.currentMatch = match
-                        print("[GameCenter] Found active match on launch: \(match.matchID)")
-                        // Retry any pending turn that failed in a previous session
-                        self.retryPendingTurn()
-                        return
-                    }
+                let best = try await bestPlayableMatch()
+                if let best {
+                    self.currentMatch = best
+                    print("[GameCenter] Found active match on launch: \(best.matchID)")
+                    self.retryPendingTurn()
                 }
             } catch {
                 print("[GameCenter] loadActiveMatch error: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Loads all matches, removes non-playable ones, returns the best playable match (or nil).
+    /// Used by both loadActiveMatch and findOrCreateMatch for consistent dedup.
+    private func bestPlayableMatch() async throws -> GKTurnBasedMatch? {
+        let matches = try await GKTurnBasedMatch.loadMatches()
+        print("[GameCenter] Found \(matches.count) existing matches")
+
+        var best: GKTurnBasedMatch?
+        for match in matches {
+            let hasData = match.matchData != nil && !(match.matchData?.isEmpty ?? true)
+            let anyQuit = match.participants.contains { $0.matchOutcome == .quit }
+            let playable = (match.status == .open || match.status == .matching)
+            print("[GameCenter]   status=\(match.status.rawValue) hasData=\(hasData) anyQuit=\(anyQuit)")
+
+            if !playable || anyQuit {
+                print("[GameCenter]   removing non-playable match")
+                try? await match.remove()
+                continue
+            }
+
+            if hasData {
+                if let data = match.matchData,
+                   let state = try? JSONDecoder().decode(MultiplayerGameState.self, from: data),
+                   state.isGameOver {
+                    print("[GameCenter]   removing finished match")
+                    try? await match.remove()
+                    continue
+                }
+            }
+
+            // Keep the best match. Priority:
+            // 1. Has game data (in-progress) beats empty
+            // 2. Fully paired (both participants) beats unpaired
+            // 3. Smallest matchID as final tiebreak
+            if let existing = best {
+                let existingHasData = existing.matchData != nil && !(existing.matchData?.isEmpty ?? true)
+                let paired = match.participants.allSatisfy { $0.player != nil }
+                let existingPaired = existing.participants.allSatisfy { $0.player != nil }
+
+                let preferNew: Bool
+                if hasData != existingHasData {
+                    preferNew = hasData
+                } else if paired != existingPaired {
+                    preferNew = paired
+                } else {
+                    preferNew = match.matchID < existing.matchID
+                }
+                if preferNew {
+                    print("[GameCenter]   removing duplicate \(existing.matchID)")
+                    try? await existing.remove()
+                    best = match
+                } else {
+                    print("[GameCenter]   removing duplicate \(match.matchID)")
+                    try? await match.remove()
+                }
+            } else {
+                best = match
+            }
+        }
+        return best
     }
 
     // MARK: - Find or Create Match
@@ -91,65 +139,9 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
         Task {
             defer { self.isFinding = false }
             do {
-                // 1. Load all matches; keep the best one, remove the rest
-                let matches = try await GKTurnBasedMatch.loadMatches()
-                print("[GameCenter] Found \(matches.count) existing matches")
-
-                var bestMatch: GKTurnBasedMatch?
-                for match in matches {
-                    let hasData = match.matchData != nil && !(match.matchData?.isEmpty ?? true)
-                    let anyQuit = match.participants.contains { $0.matchOutcome == .quit }
-                    let playable = (match.status == .open || match.status == .matching)
-                    print("[GameCenter]   status=\(match.status.rawValue) hasData=\(hasData) anyQuit=\(anyQuit)")
-
-                    if !playable || anyQuit {
-                        print("[GameCenter]   removing non-playable match")
-                        try? await match.remove()
-                        continue
-                    }
-
-                    if hasData {
-                        if let data = match.matchData,
-                           let state = try? JSONDecoder().decode(MultiplayerGameState.self, from: data),
-                           state.isGameOver {
-                            print("[GameCenter]   removing finished match")
-                            try? await match.remove()
-                            continue
-                        }
-                    }
-
-                    // Keep the best match. Priority:
-                    // 1. Has game data (in-progress) beats empty
-                    // 2. Fully paired (both participants) beats unpaired
-                    // 3. Smallest matchID as final tiebreak
-                    if let existing = bestMatch {
-                        let existingHasData = existing.matchData != nil && !(existing.matchData?.isEmpty ?? true)
-                        let paired = match.participants.allSatisfy { $0.player != nil }
-                        let existingPaired = existing.participants.allSatisfy { $0.player != nil }
-
-                        let preferNew: Bool
-                        if hasData != existingHasData {
-                            preferNew = hasData
-                        } else if paired != existingPaired {
-                            preferNew = paired
-                        } else {
-                            preferNew = match.matchID < existing.matchID
-                        }
-                        if preferNew {
-                            print("[GameCenter]   removing duplicate \(existing.matchID) (paired=\(existingPaired) data=\(existingHasData))")
-                            try? await existing.remove()
-                            bestMatch = match
-                        } else {
-                            print("[GameCenter]   removing duplicate \(match.matchID) (paired=\(paired) data=\(hasData))")
-                            try? await match.remove()
-                        }
-                    } else {
-                        bestMatch = match
-                    }
-                }
-
-                if let match = bestMatch {
-                    print("[GameCenter]   using match")
+                // 1. Find best existing match (cleans up non-playable/duplicates)
+                if let match = try await self.bestPlayableMatch() {
+                    print("[GameCenter]   using existing match")
                     self.handleMatchFound(match)
                     return
                 }
@@ -227,7 +219,11 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                 let localIdx = engine.localPlayerIndex
                 let localScore = state.playerScores[localIdx]
                 let opponentScore = state.playerScores[localIdx == 0 ? 1 : 0]
-                gcm.endMatch(matchData: data, localWon: localScore > opponentScore)
+                if localScore == opponentScore {
+                    gcm.endMatch(matchData: data, outcome: .tied)
+                } else {
+                    gcm.endMatch(matchData: data, localWon: localScore > opponentScore)
+                }
             } else {
                 gcm.submitTurn(matchData: data)
             }
@@ -236,6 +232,7 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
 
     func handleMatchFound(_ match: GKTurnBasedMatch) {
         currentMatch = match
+        lastLoadedDataSize = 0
         ensureMultiplayerCallback()
 
         let isMyTurn = match.currentParticipant?.player?.gamePlayerID == localPlayerID
@@ -247,11 +244,19 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
         print("[GameCenter]   currentParticipant: \(match.currentParticipant?.player?.displayName ?? "?")")
         print("[GameCenter]   localPlayerID: \(localPlayerID)")
 
-        if let data = match.matchData, !data.isEmpty,
-           let state = try? JSONDecoder().decode(MultiplayerGameState.self, from: data) {
-            print("[GameCenter] Restoring existing game state")
-            self.loadMatchState(state, from: match)
-        } else if isMyTurn {
+        if let data = match.matchData, !data.isEmpty {
+            do {
+                let state = try JSONDecoder().decode(MultiplayerGameState.self, from: data)
+                print("[GameCenter] Restoring existing game state")
+                self.loadMatchState(state, from: match)
+                return
+            } catch {
+                print("[GameCenter] DECODE FAILED in handleMatchFound: \(error)")
+                self.engine?.errorMessage = "Failed to load game state"
+                return
+            }
+        }
+        if isMyTurn {
             print("[GameCenter] New match — I go first, initializing game")
             self.startNewMultiplayerGame(from: match)
         } else {
@@ -299,50 +304,24 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
     private func loadMatchState(_ state: MultiplayerGameState, from match: GKTurnBasedMatch) {
         guard let engine else { return }
 
-        // Update display names from resolved match participants
-        var updatedState = state
+        // Update display names and IDs from resolved match participants
+        var s = state
         var matchedPlayer1 = false
         var matchedPlayer2 = false
         for p in match.participants {
             guard let player = p.player else { continue }
-            if !matchedPlayer1 && player.gamePlayerID == updatedState.player1GameCenterID {
+            if !matchedPlayer1 && player.gamePlayerID == s.player1GameCenterID {
                 matchedPlayer1 = true
-                updatedState = MultiplayerGameState(
-                    player1GameCenterID: updatedState.player1GameCenterID,
-                    player2GameCenterID: updatedState.player2GameCenterID,
-                    player1DisplayName: player.displayName,
-                    player2DisplayName: updatedState.player2DisplayName,
-                    board: updatedState.board,
-                    playerScores: updatedState.playerScores,
-                    playerRacks: updatedState.playerRacks,
-                    bag: updatedState.bag,
-                    currentPlayerIndex: updatedState.currentPlayerIndex,
-                    moveHistory: updatedState.moveHistory,
-                    isGameOver: updatedState.isGameOver,
-                    consecutiveScorelessTurns: updatedState.consecutiveScorelessTurns
-                )
-            } else if !matchedPlayer2 && (player.gamePlayerID == updatedState.player2GameCenterID ||
-                      updatedState.player2GameCenterID.isEmpty) {
+                s.player1DisplayName = player.displayName
+            } else if !matchedPlayer2 && (player.gamePlayerID == s.player2GameCenterID || s.player2GameCenterID.isEmpty) {
                 matchedPlayer2 = true
-                updatedState = MultiplayerGameState(
-                    player1GameCenterID: updatedState.player1GameCenterID,
-                    player2GameCenterID: player.gamePlayerID,
-                    player1DisplayName: updatedState.player1DisplayName,
-                    player2DisplayName: player.displayName,
-                    board: updatedState.board,
-                    playerScores: updatedState.playerScores,
-                    playerRacks: updatedState.playerRacks,
-                    bag: updatedState.bag,
-                    currentPlayerIndex: updatedState.currentPlayerIndex,
-                    moveHistory: updatedState.moveHistory,
-                    isGameOver: updatedState.isGameOver,
-                    consecutiveScorelessTurns: updatedState.consecutiveScorelessTurns
-                )
+                s.player2GameCenterID = player.gamePlayerID
+                s.player2DisplayName = player.displayName
             }
         }
 
-        let localIndex = (updatedState.player1GameCenterID == localPlayerID) ? 0 : 1
-        engine.loadMultiplayerState(updatedState, localPlayerIndex: localIndex)
+        let localIndex = (s.player1GameCenterID == localPlayerID) ? 0 : 1
+        engine.loadMultiplayerState(s, localPlayerIndex: localIndex)
     }
 
     /// Pending turn data for retry if submission fails (persisted across app restarts)
@@ -418,13 +397,14 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
         submitTurn(matchData: data)
     }
 
-    func endMatch(matchData: Data, localWon: Bool) {
+    func endMatch(matchData: Data, localWon: Bool? = nil, outcome: GKTurnBasedMatch.Outcome? = nil) {
         guard let match = currentMatch else { return }
         for p in match.participants {
-            if p.player?.gamePlayerID == localPlayerID {
-                p.matchOutcome = localWon ? .won : .lost
-            } else {
-                p.matchOutcome = localWon ? .lost : .won
+            if let outcome {
+                p.matchOutcome = outcome
+            } else if let localWon {
+                let isLocal = p.player?.gamePlayerID == localPlayerID
+                p.matchOutcome = isLocal == localWon ? .won : .lost
             }
         }
         Task {
@@ -462,6 +442,7 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                 }
                 print("[GameCenter] forfeit: SUCCESS")
                 self.currentMatch = nil
+                self.pendingTurnData = nil
                 self.isWaitingForOpponent = false
                 self.engine?.showModeSelection = true
             } catch {
@@ -498,6 +479,9 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
         }
     }
 
+    /// Tracks last-loaded match data size to avoid redundant reloads in poll
+    private var lastLoadedDataSize: Int = 0
+
     // MARK: - Polling
 
     func pollForMatchUpdate() {
@@ -507,7 +491,12 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                 // Use loadMatches() instead of load(withID:) to avoid stale cached data
                 let matches = try await GKTurnBasedMatch.loadMatches()
                 guard let refreshed = matches.first(where: { $0.matchID == match.matchID }) else {
-                    print("[GameCenter] poll: match not found in loadMatches()")
+                    print("[GameCenter] poll: match not found in loadMatches() — navigating away")
+                    self.isWaitingForOpponent = false
+                    self.currentMatch = nil
+                    self.pendingTurnData = nil
+                    self.engine?.isGameOver = false
+                    self.engine?.showModeSelection = true
                     return
                 }
                 self.currentMatch = refreshed
@@ -537,6 +526,11 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                     return
                 }
 
+                // Skip if data hasn't changed since last load
+                if data.count == self.lastLoadedDataSize && !self.isWaitingForOpponent {
+                    return
+                }
+
                 let state: MultiplayerGameState
                 do {
                     state = try JSONDecoder().decode(MultiplayerGameState.self, from: data)
@@ -549,6 +543,7 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                 if self.isWaitingForOpponent {
                     print("[GameCenter] poll: got match data while waiting, loading state")
                     self.isWaitingForOpponent = false
+                    self.lastLoadedDataSize = data.count
                     self.loadMatchState(state, from: refreshed)
                     return
                 }
@@ -556,6 +551,7 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                 let localIndex = (state.player1GameCenterID == self.localPlayerID) ? 0 : 1
                 if state.currentPlayerIndex == localIndex {
                     print("[GameCenter] poll: it's now our turn, loading state")
+                    self.lastLoadedDataSize = data.count
                     self.loadMatchState(state, from: refreshed)
                 }
             } catch {
@@ -579,13 +575,17 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                 return
             }
 
-            if let data = match.matchData, !data.isEmpty,
-               let state = try? JSONDecoder().decode(MultiplayerGameState.self, from: data) {
-                print("[GameCenter] receivedTurnEvent: decoded state, currentPlayer=\(state.currentPlayerIndex)")
-                self.isWaitingForOpponent = false
-                self.loadMatchState(state, from: match)
+            if let data = match.matchData, !data.isEmpty {
+                do {
+                    let state = try JSONDecoder().decode(MultiplayerGameState.self, from: data)
+                    print("[GameCenter] receivedTurnEvent: decoded state, currentPlayer=\(state.currentPlayerIndex)")
+                    self.isWaitingForOpponent = false
+                    self.loadMatchState(state, from: match)
+                } catch {
+                    print("[GameCenter] receivedTurnEvent: DECODE FAILED — \(error)")
+                }
             } else {
-                print("[GameCenter] receivedTurnEvent: no valid match data, ignoring")
+                print("[GameCenter] receivedTurnEvent: no match data, ignoring")
             }
         }
     }
@@ -620,6 +620,7 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
 
         self.isWaitingForOpponent = false
         self.currentMatch = nil
+        self.pendingTurnData = nil
         // Go straight to mode selection so the user isn't stuck on a dead game board
         self.engine?.isGameOver = false
         self.engine?.showModeSelection = true

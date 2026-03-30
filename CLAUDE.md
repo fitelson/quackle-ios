@@ -36,25 +36,27 @@ xcodebuild -project QuackleScrabble.xcodeproj -scheme QuackleScrabble -destinati
 - Bag() default constructor calls prepareFullBag(); always call clear() before toss() when restoring
 - Bundle ID: `com.bef.quacklescrabble`
 - Lexicon: CSW19
-- GameMode enum: .ai (vs computer), .multiplayer (via Game Center), .passAndPlay (two humans, one device)
+- GameMode enum: .ai (vs computer), .multiplayer (via Game Center)
 - Multiplayer uses GKTurnBasedMatch with direct-invite matching (GKMatchRequest.recipients), not auto-match pool
 - Two known players hardcoded in GameCenterManager.knownPlayerIDs; opponentGamePlayerID computed from localPlayerID
-- GKPlayer.loadPlayers(forIdentifiers:) resolves opponent ID to GKPlayer object for invite
-- findOrCreateMatch() reuses existing open/matching matches; creates direct-invite match if none exist
+- Opponent resolved via loadFriends(identifiedBy:) with loadPlayers(forIdentifiers:) fallback
+- NSGKFriendListUsageDescription in Info.plist for friends API access
+- bestPlayableMatch() shared dedup logic: cleans non-playable/finished/duplicate matches; prefers data > paired > smallest matchID
+- findOrCreateMatch() and loadActiveMatch() both use bestPlayableMatch() for consistent match selection
 - Match status .matching (invite pending) treated as playable alongside .open
 - "…" menu shows "Resume Online Game" (active match) or "Play Online" (no match) when in AI mode; saves AI game before matchmaking
-- TurnBasedMatchmakerView deleted (no matchmaker UI needed with direct invite)
 - Only the currentParticipant initializes a new match; the other player waits for first move
-- Opponent display names resolved from match participants when loading state (handles late-join)
+- Opponent display names resolved from match participants when loading state (var properties on MultiplayerGameState, not full-struct copies)
 - GameCenterManager conforms to GKLocalPlayerListener for turn event callbacks
-- receivedTurnEventFor only clears isWaitingForOpponent when match data exists (prevents spurious callback race)
-- Both WaitingForOpponentView and GameView poll Game Center every 3s via `.task`-based async loops (auto-cancelled when conditions change)
-- GameView polls whenever in multiplayer mode (not just opponent's turn) — ensures forfeits are detected even when it's your turn
-- Polling uses loadMatches() instead of load(withID:) to avoid stale cached data
-- Poll checks match status (.open) and participant outcomes (.quit) to detect forfeit/end
+- receivedTurnEventFor uses do/catch for JSON decode (not try?) — logs decode failures
+- Both WaitingForOpponentView and GameView poll Game Center every 3s via `.task`-based async loops
+- GameView polls whenever in multiplayer mode (not just opponent's turn) — ensures forfeits detected even on your turn
+- Poll skips redundant reloads via lastLoadedDataSize tracking
+- Poll navigates to mode selection if match disappears from loadMatches() (prevents stuck state)
+- Poll checks match status and participant .quit outcomes to detect forfeit/end
 - onMultiplayerMoveCommitted callback: initial setup in QuackleScrabbleApp, re-wired by ensureMultiplayerCallback() in handleMatchFound
 - ensureMultiplayerCallback() guarantees the callback is set every time a multiplayer game is entered — survives game-mode switches
-- startNewGame() must NOT clear onMultiplayerMoveCommitted (was a critical bug: callback went nil after AI game, causing multiplayer moves to silently not submit)
+- startNewGame() must NOT clear onMultiplayerMoveCommitted
 - isLocalPlayerTurn is a stored property updated in refreshState(), not computed (bridge calls aren't tracked by @Observable)
 - Multiplayer move history managed via MultiplayerGameState serialization, not bridge (bridge only has moves since last restore)
 - appendLatestMoveToHistory() reads bridge history post-commit and appends to accumulated moveHistory
@@ -64,22 +66,23 @@ xcodebuild -project QuackleScrabble.xcodeproj -scheme QuackleScrabble -destinati
   - Shows "Score: N" label (orange) instead of Submit button; Clear button available
   - Bridge method scoreMoveStringIgnoringRack: scores valid board placements regardless of rack ownership
 - Submit button shows score preview: "Submit (N)" for valid tentative moves
-- Pass & Play uses HandoffView overlay between turns to hide the rack during device handoff
 - Bridge has separate methods for AI games (startNewGame/restoreGame) and two-human games (startNewTwoHumanGame/restoreTwoHumanGame)
 - Game state persistence (UserDefaults) only applies to AI mode; multiplayer state lives in GameKit match data
-- ModeSelectionView shown on first launch (no saved game) or when user taps New
-- "…" Menu next to New button: AI Skill Level (always), Switch to AI Game (in multiplayer), Resume Online Game (in AI with active match)
+- ModeSelectionView shown on first launch (no saved game) or when user taps New; shows engine.errorMessage below Play Online button
+- "…" Menu next to New button: AI Skill Level (always), Switch to AI Game (in multiplayer), Resume Online Game / Play Online (in AI)
 - Game switching preserves both games: AI saves to UserDefaults, multiplayer lives in Game Center match data
 - switchToAIGame() loads saved AI game or starts new; preserves onMultiplayerMoveCommitted callback
 - resumeCurrentMatch() refreshes match from Game Center and calls handleMatchFound
 - Turn event callbacks (receivedTurnEventFor, matchEnded) only switch to multiplayer when already in multiplayer mode; otherwise silently update match reference
-- loadActiveMatch() called after Game Center authentication; queries for open matches so "Resume Online Game" works across app restarts and devices
+- loadActiveMatch() called after Game Center authentication; uses bestPlayableMatch() for consistent dedup
 - Same online game can be open on multiple devices (iPhone + Mac) — Game Center match data is server-side; both see same state
 - submitTurn retries up to 3 times with exponential backoff; re-fetches fresh match on retries
-- pendingTurnData persisted to UserDefaults — survives app restart; retried on app foreground and after loadActiveMatch
+- pendingTurnData persisted to UserDefaults — survives app restart; cleared on match end/forfeit to prevent cross-match corruption
 - forfeitMatch refreshes match from GC before quitting (avoids stale participant state); only clears local state on success
-- handleMatchEnded navigates straight to mode selection (not stuck on dead game board)
-- forfeitedMatchIDs (in-memory Set) prevents re-finding a just-forfeited match before GC propagates the quit
+- handleMatchEnded navigates straight to mode selection (clears currentMatch, pendingTurnData, isWaitingForOpponent)
+- WaitingForOpponentView Cancel button clears isWaitingForOpponent (prevents stuck-in-waiting after switching to AI)
+- Score ties handled with .tied outcome for both players (not asymmetric won/lost)
+- handleMatchFound uses do/catch for JSON decode (not try?) — shows error instead of silently starting new game on corrupted data
 - QuackleBridge critical methods (startNewGame, haveComputerPlay, kibitzMoves, commitMove, restore*, moveHistory) are wrapped in C++ try/catch to prevent exceptions from crossing the ObjC boundary
 - QuackleEngine uses a serial `bridgeQueue` (DispatchQueue) for background bridge work (init, AI play) via `withCheckedContinuation`, avoiding `Task.detached`
 - AI/opponent move animations tracked via `animationTask` property; previous animation cancelled before starting new one

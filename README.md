@@ -4,10 +4,9 @@ A personal Scrabble app for iPhone and Mac, built with SwiftUI and the [Quackle]
 
 ## Features
 
-### Three Game Modes
+### Two Game Modes
 - **Play vs AI** — Quackle's NormalPlayer with adjustable skill slider (easy to near-perfect)
-- **Pass & Play** — Two players on the same device, with a handoff screen between turns
-- **Play Online** — Game Center turn-based multiplayer via programmatic auto-match
+- **Play Online** — Game Center turn-based multiplayer via direct invite between two known players
 
 ### Gameplay
 - **Drag-and-drop** tile placement — drag tiles from rack to board, reposition on board, or drag back to rack
@@ -15,7 +14,7 @@ A personal Scrabble app for iPhone and Mac, built with SwiftUI and the [Quackle]
 - **Shuffle** button to randomize rack tile order
 - **Real-time validation** — green tiles for valid moves, red for invalid
 - **Tile point values** displayed on every tile (standard Scrabble scoring)
-- **Blank tile picker** — tap a blank, choose a letter from an A–Z grid
+- **Blank tile picker** — tap a blank, choose a letter from an A-Z grid
 - **Exchange, pass, and new game** support
 - **Move history** and **top 50 candidate moves** views
 - **Board zoom** — double-tap/click to zoom in, drag to pan (drag-and-drop is zoom-aware)
@@ -24,12 +23,23 @@ A personal Scrabble app for iPhone and Mac, built with SwiftUI and the [Quackle]
 - **Coin flip** determines who goes first in AI games
 - Uses the **CSW19** dictionary
 
+### Multiplayer
+- Direct-invite matching via `GKMatchRequest.recipients` (no auto-match pool)
+- Turn submission with 3x retry and exponential backoff
+- Pending turns persisted to UserDefaults for cross-restart recovery
+- 3-second polling for opponent moves and forfeit detection
+- Hypothetical moves: place tiles and see scores while waiting for opponent
+- Opponent move animation (3-phase flip + fly to board)
+- Game switching: play AI and online games without forfeiting either
+- Same game visible on multiple devices (iPhone + Mac) via Game Center
+
 ## Requirements
 
 - Xcode 16.3+
 - iOS 17.0+ / macOS 14.0+
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
 - Apple Developer account (for Game Center multiplayer)
+- Game Center friends with your opponent (for direct-invite matching)
 
 ## Build
 
@@ -52,14 +62,14 @@ xcodebuild -scheme QuackleScrabble \
 
 ```
 QuackleScrabble/
-  App/            — SwiftUI app entry point, ContentView, GameView, HandoffView
+  App/            — SwiftUI app entry point, ContentView, GameView, WaitingForOpponentView
   Bridge/         — Obj-C++ bridge (QuackleBridge) and QuackleEngine
   Model/          — GameState, TilePlacement, MoveHistoryEntry
   Multiplayer/    — GameCenterManager, MultiplayerGameState
   Views/
     Board/        — BoardView, SquareView
     Rack/         — RackView
-    Game/         — ScoreboardView, MoveInputView, ModeSelectionView
+    Game/         — ScoreboardView, MoveInputView, ModeSelectionView, AIAnimationOverlay
   Assets.xcassets — App icon (iOS + macOS)
 libquackle/       — Quackle C++ engine sources
 data/             — CSW19 dictionary, alphabet, strategy files
