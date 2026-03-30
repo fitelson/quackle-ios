@@ -45,9 +45,18 @@ struct MoveInputView: View {
                             engine.switchToAIGame()
                         }
                     }
-                    if engine.gameMode != .multiplayer && gameCenterManager.hasActiveMatch {
-                        Button("Resume Online Game") {
-                            gameCenterManager.resumeCurrentMatch()
+                    if engine.gameMode != .multiplayer {
+                        if gameCenterManager.hasActiveMatch {
+                            Button("Resume Online Game") {
+                                gameCenterManager.resumeCurrentMatch()
+                            }
+                        } else if gameCenterManager.isAuthenticated {
+                            Button("Play Online") {
+                                if engine.gameMode == .ai {
+                                    engine.saveGameState()
+                                }
+                                gameCenterManager.findOrCreateMatch()
+                            }
                         }
                     }
                 } label: {

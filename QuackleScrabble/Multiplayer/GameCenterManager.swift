@@ -53,8 +53,13 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                 let matches = try await GKTurnBasedMatch.loadMatches()
                 for match in matches {
                     let anyQuit = match.participants.contains { $0.matchOutcome == .quit }
-                    guard match.status == .open, !anyQuit,
-                          let data = match.matchData, !data.isEmpty else { continue }
+                    guard (match.status == .open || match.status == .matching), !anyQuit else { continue }
+                    guard let data = match.matchData, !data.isEmpty else {
+                        // Matching/open but no data yet — still a valid active match
+                        self.currentMatch = match
+                        print("[GameCenter] Found active match on launch (no data yet): \(match.matchID)")
+                        return
+                    }
                     if let state = try? JSONDecoder().decode(MultiplayerGameState.self, from: data),
                        !state.isGameOver {
                         self.currentMatch = match
@@ -89,7 +94,8 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                     let anyQuit = match.participants.contains { $0.matchOutcome == .quit }
                     print("[GameCenter]   status=\(match.status.rawValue) hasData=\(hasData) anyQuit=\(anyQuit)")
 
-                    if match.status != .open || anyQuit || self.forfeitedMatchIDs.contains(match.matchID) {
+                    let playable = (match.status == .open || match.status == .matching)
+                    if !playable || anyQuit || self.forfeitedMatchIDs.contains(match.matchID) {
                         // Ended, forfeited, or recently forfeited locally — clean up
                         print("[GameCenter]   removing non-playable match")
                         try? await match.remove()
@@ -107,8 +113,18 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                         }
                     }
 
-                    // Open match (pending or in-progress) — use it
-                    print("[GameCenter]   using existing open match")
+                    // Check if both participants are present (fully paired)
+                    let fullyPaired = match.participants.allSatisfy { $0.player != nil }
+                    if !fullyPaired && !hasData {
+                        // Unpaired match with no game data — remove it so find(for:)
+                        // can discover the other player's pending match instead
+                        print("[GameCenter]   removing unpaired empty match to allow fresh auto-match")
+                        try? await match.remove()
+                        continue
+                    }
+
+                    // Paired or in-progress match — use it
+                    print("[GameCenter]   using existing match (paired=\(fullyPaired))")
                     self.handleMatchFound(match)
                     return
                 }
@@ -399,7 +415,7 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
 
     var hasActiveMatch: Bool {
         guard let match = currentMatch else { return false }
-        return match.status == .open
+        return match.status == .open || match.status == .matching
     }
 
     func resumeCurrentMatch() {
@@ -440,7 +456,7 @@ class GameCenterManager: NSObject, GKLocalPlayerListener {
                 print("[GameCenter] poll: dataSize=\(dataSize), currentTurn=\(currentTurn), local=\(self.localPlayerID), waiting=\(self.isWaitingForOpponent), status=\(refreshed.status.rawValue)")
 
                 // Check if match ended (opponent forfeited or match otherwise closed)
-                if refreshed.status != .open {
+                if refreshed.status != .open && refreshed.status != .matching {
                     print("[GameCenter] poll: match is no longer open (status=\(refreshed.status.rawValue))")
                     self.handleMatchEnded(refreshed)
                     return
