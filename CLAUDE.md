@@ -78,6 +78,7 @@ xcodebuild -project QuackleScrabble.xcodeproj -scheme QuackleScrabble -destinati
 - Same online game can be open on multiple devices (iPhone + Mac) via iCloud KVS match ID sharing
 - Active match ID stored in NSUbiquitousKeyValueStore (key: "activeMatchID"), syncs across devices within seconds
 - loadActiveMatch and findOrCreateMatch check iCloud KVS first, then fall back to bestPlayableMatch()
+- bestPlayableMatch() removes unpaired empty matches (no opponent yet) to force find(for:) to run fresh and pair with the other player's match
 - handleMatchFound writes match ID to KVS; handleMatchEnded/forfeit clears it
 - iCloud KVS entitlement: com.apple.developer.ubiquity-kvstore-identifier in entitlements
 - Poll reloads state whenever match data changes (not just on turn change) — handles same-player cross-device moves
