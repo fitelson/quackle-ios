@@ -96,6 +96,9 @@ xcodebuild -project QuackleScrabble.xcodeproj -scheme QuackleScrabble -destinati
 - initStage3LoadGaddag returns BOOL (NO if GADDAG file not found; move generation still works, just slower)
 - Board restoration validates rowBlanks array bounds before access (guards against mismatched array sizes)
 - RNG in haveComputerPlay seeded via `std::random_device` (not `std::time`)
+- AI bingo probability: skill slider also gates whether the AI plays an available bingo. `engine.bingoProbability = skillLevel * skillLevel` (squared, so 0.5 → 25%) is passed to `haveComputerPlayWithBingoProbability:` per turn (not per game)
+- Bridge partitions top-100 candidate moves into bingo (lays all 7 tiles) vs non-bingo pools, then picks a pool by bingoProbability before applying Gaussian skill weighting; falls back to whichever pool is non-empty
+- Candidate-move pool size is 100 (not 50): bingo-rich racks fill the top 50 entirely with bingos, defeating the partition
 - loadMatchState tracks matched players with flags to prevent double-assignment when player2GameCenterID is empty
 - forfeitMatch uses do/catch with error reporting (not silent try?)
 - Sheets use single `.sheet(item:)` with `ActiveSheet` enum (blankPicker, topMoves, history, skillSlider) — never multiple `.sheet(isPresented:)` on the same view
